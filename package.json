@@ -1,0 +1,36 @@
+{
+  "name": "agentdesk",
+  "version": "0.1.0",
+  "description": "One panel for all your AI coding agents. Know which one is waiting on you.",
+  "type": "module",
+  "bin": {
+    "agentdesk": "bin/agentdesk.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "adapters",
+    "panel/panel.swift",
+    "helper/foreground.applescript",
+    "README.md",
+    "README.zh-CN.md",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "agent",
+    "dashboard",
+    "notification"
+  ],
+  "os": [
+    "darwin",
+    "win32",
+    "linux"
+  ]
+}

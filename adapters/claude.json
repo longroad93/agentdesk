@@ -1,0 +1,58 @@
+{
+  "name": "claude",
+  "label": "Claude Code",
+  "source": "stdin",
+  "confidence": "exact",
+  "detect": {
+    "bin": "claude",
+    "config": "~/.claude/settings.json"
+  },
+  "install": {
+    "type": "claude-hooks",
+    "events": [
+      "UserPromptSubmit",
+      "Notification",
+      "Stop",
+      "SessionEnd"
+    ]
+  },
+  "map": {
+    "key": "$.session_id",
+    "cwd": "$.cwd",
+    "title": "@title:$.transcript_path",
+    "transcript": "$.transcript_path"
+  },
+  "rules": [
+    {
+      "when": "$.hook_event_name == UserPromptSubmit",
+      "kind": "start",
+      "map": {
+        "prompt": "$.prompt"
+      }
+    },
+    {
+      "when": "$.hook_event_name == Notification",
+      "kind": "waiting",
+      "map": {
+        "summary": "$.message"
+      },
+      "summary": "需要你确认"
+    },
+    {
+      "when": "$.hook_event_name == Stop",
+      "kind": "done"
+    },
+    {
+      "when": "$.hook_event_name == SubagentStop",
+      "kind": "heartbeat"
+    },
+    {
+      "when": "$.hook_event_name == SessionEnd",
+      "kind": "closed"
+    }
+  ],
+  "foreground": {
+    "darwin": "Claude",
+    "win32": "claude"
+  }
+}

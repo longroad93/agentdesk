@@ -1,0 +1,19 @@
+{
+  "name": "kimi",
+  "label": "Kimi Code",
+  "source": "argv",
+  "parse": "json:$LAST",
+  "confidence": "exact",
+  "detect": { "bin": "kimi", "config": "~/.kimi-code/config.toml" },
+  "install": { "type": "toml-notify", "file": "~/.kimi-code/config.toml", "key": "notify" },
+  "map": {
+    "key": "$.turn-id",
+    "title": "$.input-messages[0]",
+    "summary": "$.last-assistant-message"
+  },
+  "rules": [
+    { "when": "$.type == agent-turn-complete", "kind": "done" },
+    { "when": "$.type ~= turn-ended", "kind": "done" },
+    { "when": "$.type ~= approval", "kind": "waiting" }
+  ]
+}

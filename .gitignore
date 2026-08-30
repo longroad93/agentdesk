@@ -1,0 +1,12 @@
+node_modules/
+*.log
+.DS_Store
+
+# 编译产物：用户首次运行 agentdesk panel 时现编译
+panel/*.app/
+panel/agentdesk-panel
+helper/*.app/
+
+# 你的全局 gitignore 排除了 AGENTS.md（大概是为了不把 AI 指令带进工作项目），
+# 但在这个仓库里它是要发布的安装文档，强制留下
+!AGENTS.md

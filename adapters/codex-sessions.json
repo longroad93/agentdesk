@@ -1,0 +1,57 @@
+{
+  "name": "codex",
+  "label": "Codex (ChatGPT app)",
+  "source": "watch-jsonl",
+  "confidence": "exact",
+  "glob": "~/.codex/sessions/*/*/*/rollout-*.jsonl",
+  "index": {
+    "file": "~/.codex/session_index.jsonl",
+    "key": "id",
+    "fields": {
+      "title": "thread_name"
+    }
+  },
+  "map": {
+    "key": "$._session",
+    "title": "$._title"
+  },
+  "rules": [
+    {
+      "when": "$.payload.type ~= approval",
+      "kind": "waiting",
+      "map": {
+        "summary": "$.payload.reason"
+      }
+    },
+    {
+      "when": "$.payload.type == task_started",
+      "kind": "start"
+    },
+    {
+      "when": "$.payload.type == user_message",
+      "kind": "start",
+      "map": {
+        "prompt": "$.payload.message"
+      }
+    },
+    {
+      "when": "$.payload.type == task_complete",
+      "kind": "done",
+      "map": {
+        "summary": "$.payload.last_agent_message"
+      }
+    },
+    {
+      "when": "$.type == session_meta",
+      "kind": "start",
+      "map": {
+        "cwd": "$.payload.cwd"
+      }
+    }
+  ],
+  "foreground": {
+    "darwin": "ChatGPT",
+    "win32": "ChatGPT"
+  },
+  "session_filter": "$.payload.thread_source == user"
+}
