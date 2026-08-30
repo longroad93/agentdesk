@@ -26,6 +26,8 @@ function assertUICompiles() {
 
 const SELF_DIR = pathJoin(dirname(fileURLToPath(import.meta.url)), '..');
 
+const BUILD = String(Date.now());
+
 export function serve({ port } = {}) {
   assertUICompiles();
   ensureHome();
@@ -72,7 +74,7 @@ export function serve({ port } = {}) {
     for (const id of [...lastSnapshot.keys()]) {
       if (!tasks.find(t => t.id === id)) lastSnapshot.delete(id);
     }
-    push({ type: 'sync', tasks, changed, states: STATES, attention: ATTENTION, foreground: fgAgents });
+    push({ type: 'sync', tasks, changed, states: STATES, attention: ATTENTION, foreground: fgAgents, build: BUILD });
     if (changed.length) fireWebhooks(cfg, changed);
   }
 
@@ -95,7 +97,7 @@ export function serve({ port } = {}) {
       res.write('retry: 3000\n\n');
       clients.add(res);
       // 新连接先给一份全量，changed 为空避免一打开就把历史全弹一遍
-      res.write(`data: ${JSON.stringify({ type: 'sync', tasks: snapshot(), changed: [], states: STATES, attention: ATTENTION })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'sync', tasks: snapshot(), changed: [], states: STATES, attention: ATTENTION, foreground: fgAgents, build: BUILD })}\n\n`);
       req.on('close', () => clients.delete(res));
       return;
     }
