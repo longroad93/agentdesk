@@ -4,7 +4,7 @@
   "source": "sqlite",
   "confidence": "exact",
   "db": "~/.workbuddy/workbuddy.db",
-  "query": "SELECT id, cwd, COALESCE(NULLIF(custom_title,''), title, '') AS title, status, COALESCE(is_background_automation, 0) AS bg FROM sessions WHERE last_activity_at > ? AND deleted_at IS NULL AND NOT (COALESCE(is_background_automation, 0) = 1 AND status = 'completed') ORDER BY last_activity_at DESC LIMIT 60",
+  "query": "SELECT id, cwd, COALESCE(NULLIF(custom_title,''), title, '') AS title, status, COALESCE(is_background_automation, 0) AS bg FROM sessions WHERE last_activity_at > ? AND deleted_at IS NULL AND NOT (COALESCE(is_background_automation, 0) = 1 AND status != 'error') ORDER BY last_activity_at DESC LIMIT 60",
   "map": {
     "key": "$.id",
     "cwd": "$.cwd",

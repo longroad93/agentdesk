@@ -119,26 +119,15 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
     if ((ev.kind === 'done' || ev.kind === 'failed') && !ev.auto) t.seen = false;
     if (ev.kind === 'start') t.seen = true;
 
-    if (ev.kind === 'bg_start') {
-      t.bg[ev.bg_id] = { desc: ev.bg_desc || '后台命令', since: ev.ts };
-      continue;                       // 后台任务不改前台状态
-    }
-    if (ev.kind === 'bg_done') {
-      delete t.bg[ev.bg_id];
-      if (t.state === 'bgrun' && !Object.keys(t.bg).length) {
-        t.state = ev.exit_code === 0 ? 'done' : 'failed';
-        if (ev.exit_code !== 0) t.summary = `后台任务退出码 ${ev.exit_code}`;
-      }
-      continue;
-    }
+    // 后台任务状态不走事件，由服务端扫 tasks/ 目录现算（见 server.js 的 snapshot）。
+    // 事件是一次性的：bg_start 没等到配对的 bg_done，状态就被永久钉在"后台跑着"。
+    if (ev.kind === 'bg_start' || ev.kind === 'bg_done') continue;
 
     if (ev.kind === 'closed') {
       // 会话关掉了：跑到一半算失败，已完成的保持完成
       if (t.state === 'running' || t.state === 'waiting') t.state = 'done';
     } else {
-      let next = TRANSITIONS[ev.kind];
-      // Stop 只代表主回合结束。后台还挂着任务时说"完成"会骗人。
-      if (next === 'done' && Object.keys(t.bg).length) next = 'bgrun';
+      const next = TRANSITIONS[ev.kind];
       if (next) t.state = next;
     }
   }

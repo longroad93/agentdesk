@@ -47,7 +47,10 @@ export function serve({ port } = {}) {
       const running = {};
       for (const [id, v] of Object.entries(bg)) if (v.running) running[id] = v;
       t.bg = running;
-      if (Object.keys(running).length && (t.state === 'done' || t.state === 'idle')) t.state = 'bgrun';
+      const hasBg = Object.keys(running).length > 0;
+      // 必须双向：只升不降的话，后台跑完了状态还挂在"后台跑着"上下不来
+      if (hasBg && (t.state === 'done' || t.state === 'idle')) t.state = 'bgrun';
+      else if (!hasBg && t.state === 'bgrun') t.state = 'done';
     }
     // 上面改过 state（done → bgrun），排序是 project 里按旧状态做的，得重来一次
     tasks.sort(byUrgency);
