@@ -30,6 +30,11 @@ const CSS = [
   '.dot{width:7px;height:7px;border-radius:50%;background:var(--bar);flex:none;margin-top:6px}',
   '.task:not(.unread) .dot{background:transparent}',
   '#allseen{display:none}',
+  '#fold{display:none}',
+  // 只有跑在悬浮窗里才有壳可以缩，浏览器里不显示这个按钮
+  'body.compact.shell #fold{display:inline-block;padding:2px 8px}',
+  'body.compact.folded #list{display:none}',
+  'body.compact.folded header{border-bottom:0}',
   '.empty{text-align:center;color:var(--dim);padding:60px 20px;font-size:13px}',
   '.pulse{animation:p 2s ease-in-out infinite}@keyframes p{50%{opacity:.45}}',
   // 紧凑模式是另一种排版，不是把大面板等比缩小：
@@ -77,7 +82,8 @@ const BODY = [
   '<button id="perm">开启通知</button>',
   '<button id="try" title="绕过服务端，直接由页面发一条通知">试一条</button>',
   '<button id="mute" title="有 agent 等你时响一声">🔔</button>',
-  '<button id="allseen" title="把所有已完成标记为看过">全部已读</button></header>',
+  '<button id="allseen" title="把所有已完成标记为看过">全部已读</button>',
+  '<button id="fold" title="收起 / 展开">▾</button></header>',
   '<div id="list"></div>',
 ].join('');
 
@@ -268,6 +274,23 @@ const JS = [
   'document.getElementById("allseen").onclick=function(){',
   '  var ids=(window.__last||[]).filter(function(t){return t.seen===false;}).map(function(t){return t.id;});',
   '  markSeen(ids);',
+  '};',
+  // 每次现查，不缓存 —— 壳注入 webkit 的时机不一定早于脚本执行，
+  // 缓存一次的话赶不上就永远发不出消息
+  'function shellMsg(){return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.panel;}',
+  'if(shellMsg()) document.body.classList.add("shell");',
+  'setTimeout(function(){ if(shellMsg()) document.body.classList.add("shell"); },300);',
+  'var folded=false;',
+  // 窗口尺寸归壳管，网页只发意图；壳改完再回调 __setCollapsed 同步样式
+  'window.__setCollapsed=function(on){',
+  '  folded=!!on;',
+  '  document.body.classList.toggle("folded",folded);',
+  '  var b=document.getElementById("fold");',
+  '  if(b){b.textContent=folded?"▸":"▾";b.title=folded?"展开":"收起";}',
+  '};',
+  'document.getElementById("fold").onclick=function(){',
+  '  var mh=shellMsg(); if(!mh) return;',
+  '  mh.postMessage({action: folded?"expand":"collapse"});',
   '};',
   'var es=new EventSource("/events");',
   'es.onmessage=function(e){var d=JSON.parse(e.data);',
