@@ -1,8 +1,8 @@
 // 声明式 adapter：加一个 agent = 加一个 JSON 文件，不碰代码。
-import { readFileSync, readdirSync, existsSync, openSync, readSync, closeSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HOME } from './store.js';
+import { HOME, readSessionTitle } from './store.js';
 
 const BUILTIN_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'adapters');
 const USER_DIR = join(HOME, 'adapters');   // 用户自定义的覆盖内置的
@@ -23,28 +23,6 @@ export function loadAdapters() {
     }
   }
   return out;
-}
-
-// 会话标题在 transcript 里被反复追加，最新的一份永远在文件末尾。
-// 只读尾部 64KB —— transcript 动辄上 MB，而 hook 是同步阻塞 agent 的，不能全读。
-function readSessionTitle(path) {
-  try {
-    const size = statSync(path).size;
-    const len = Math.min(size, 65536);
-    const buf = Buffer.alloc(len);
-    const fd = openSync(path, 'r');
-    readSync(fd, buf, 0, len, size - len);
-    closeSync(fd);
-    const text = buf.toString('utf8');
-    // customTitle 是用户自己改的，优先于 AI 生成的
-    for (const key of ['customTitle', 'aiTitle']) {
-      const hits = [...text.matchAll(new RegExp('"' + key + '":"((?:[^"\\\\]|\\\\.)*)"', 'g'))];
-      if (hits.length) {
-        try { return JSON.parse('"' + hits[hits.length - 1][1] + '"'); } catch { return hits[hits.length - 1][1]; }
-      }
-    }
-  } catch { /* 读不到就退回默认标题 */ }
-  return undefined;
 }
 
 // map 里以 @ 开头的值走这里，让声明式配置也能取到需要读文件才拿得到的东西

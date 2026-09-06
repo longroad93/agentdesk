@@ -1,5 +1,8 @@
 // 事件存储：只追加的 JSONL + 内存投影。没有数据库，没有 schema 迁移。
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import {
+  appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync,
+  openSync, readSync, closeSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { GROUP, WITHIN_ACTIVE } from './states.js';
 import { homedir } from 'node:os';
@@ -146,6 +149,12 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
   // 面板上就出现了标题为空、只剩副行的条目。
   for (const t of tasks.values()) {
     if (t.title) continue;
+    // 会话标题是 agent 后来才生成的。钩子触发那一刻读不到很正常，
+    // 所以这里每次投影都再试一次（带缓存），标题一出现面板就跟上。
+    if (t.transcript) {
+      const title = readSessionTitle(t.transcript);
+      if (title) { t.title = title; continue; }
+    }
     t.title = t.prompt ? titleFromPrompt(t.prompt)
             : t.cwd ? (t.cwd.split(/[/\\]/).filter(Boolean).pop() || t.cwd)
             : t.key.slice(0, 12);
@@ -188,6 +197,61 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
       return now - t.last_seen <= keepMs;
     })
     .sort(byUrgency);
+}
+
+// 从 transcript 里捞会话标题。
+//
+// 两头都读，不能只读末尾：有的会话每轮都重写标题（最新的在末尾），
+// 有的只在开头写一次，中间全是 attachment，末尾 64KB 根本够不着。
+// 先看末尾（拿到的是最新的），没有再看开头。
+const TITLE_WINDOW = 128 * 1024;
+const titleCache = new Map();
+
+export function readSessionTitle(path) {
+  let st;
+  try { st = statSync(path); } catch { return undefined; }
+  const ck = `${path}:${st.mtimeMs}:${st.size}`;
+  if (titleCache.has(ck)) return titleCache.get(ck);
+
+  let found;
+  try {
+    const fd = openSync(path, 'r');
+    try {
+      const tail = readChunk(fd, Math.max(0, st.size - TITLE_WINDOW), Math.min(st.size, TITLE_WINDOW));
+      found = pickTitle(tail);
+      if (!found && st.size > TITLE_WINDOW) found = pickTitle(readChunk(fd, 0, TITLE_WINDOW));
+    } finally { closeSync(fd); }
+  } catch (err) {
+    // 文件读不到是正常的（会话被删、权限变了），静默退回兜底标题。
+    // 但 ReferenceError/TypeError 是代码写错了 —— 这里曾经漏了 openSync 的导入，
+    // 被这个 catch 原样吞掉，标题静默失效了很久还查不出原因。别再让它藏起来。
+    if (err instanceof ReferenceError || err instanceof TypeError) {
+      process.stderr.write(`[agentdesk] readSessionTitle 代码错误: ${err.message}\n`);
+    }
+  }
+
+  if (titleCache.size > 300) titleCache.clear();
+  titleCache.set(ck, found);
+  return found;
+}
+
+function readChunk(fd, pos, len) {
+  if (len <= 0) return '';
+  const buf = Buffer.alloc(len);
+  readSync(fd, buf, 0, len, pos);
+  return buf.toString('utf8');
+}
+
+// customTitle 是你自己改的，优先于 AI 生成的
+function pickTitle(text) {
+  for (const key of ['customTitle', 'aiTitle']) {
+    const hits = [...text.matchAll(new RegExp('"' + key + '":"((?:[^"\\\\]|\\\\.)*)"', 'g'))];
+    if (hits.length) {
+      const raw = hits[hits.length - 1][1];
+      try { return JSON.parse('"' + raw + '"'); } catch { return raw; }
+    }
+  }
+  return undefined;
 }
 
 // 没有会话标题时拿第一句话凑。claude code 的 prompt 常以 @文件引用 开头，
