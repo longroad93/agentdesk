@@ -165,6 +165,85 @@ agentdesk uninit --purge      # 连 ~/.agentdesk 数据一起删
 
 ---
 
+## 如果用户是让你「接入一个新 agent」
+
+这是另一类任务，不是装机。照下面走。
+
+### 铁律：找不到确定性信号就说找不到
+
+**猜出来的规则会做出一个「看起来在工作但状态是错的」面板 —— 那比没有面板更糟。**
+用户会信任它，然后错过真正在等他的任务。宁可告诉他这个 agent 接不了。
+
+### 第一步：查它把状态写在哪，把结论报给用户再动手
+
+```bash
+# 1. 钩子/通知配置（最理想）
+ls ~/.<agent>/
+grep -rn "hooks\|notify" ~/.<agent>/*.json ~/.<agent>/*.toml 2>/dev/null
+
+# 2. 会话文件
+find ~/.<agent> -name "*.jsonl" -o -name "*.json" | head
+tail -1 <会话文件> | python3 -m json.tool | head -40
+
+# 3. 数据库（往往质量最好）
+find ~/.<agent> -name "*.db" -o -name "*.sqlite" | head
+sqlite3 "file:<库>?mode=ro" ".tables"
+sqlite3 "file:<库>?mode=ro" "PRAGMA table_info(<表>);"
+
+# 4. GUI 应用，上面都没有
+find /Applications/<App>.app -name "*.json" -path "*hook*" 2>/dev/null
+```
+
+**先把找到的信号源和判断依据告诉用户，等他确认再写 JSON。** 不要查完直接写。
+
+### 第二步：判断信号质量
+
+好信号是状态字段（`status = 'completed'`）、事件类型（`type: task_complete`）、
+退出标记（`[exited with code 0]`）。
+
+坏信号是「文件多久没动」「进程还在不在」这类推断。用了就必须标
+`"confidence": "guess"`，面板会相应降级显示。
+
+### 第三步：找出内部子会话怎么区分
+
+**这一步最容易漏，漏了面板就会被噪音淹掉。** 很多 agent 会为内部功能开子会话
+（生成摘要、跑子代理），那不是用户发起的任务。
+
+本项目踩过的坑：Codex 的内部子代理会不断产生任务，靠 `session_meta.thread_source`
+（`user` / `subagent`）才区分开；WorkBuddy 的定时任务靠 `is_background_automation`。
+
+查的时候对比几个会话的头部字段，找出「用户发起」和「内部调用」的差异。
+
+### 第四步：写 adapter 并验证
+
+参考 `adapters/` 下的现有文件，四个 source 各有一例。写完：
+
+```bash
+agentdesk serve --no-open       # 重启加载
+agentdesk status                # 看抓到没有
+tail -5 ~/.agentdesk/events.jsonl
+cat ~/.agentdesk/probe-<agent>.log   # 没匹配上的原始数据在这里
+```
+
+**验证要看两头**：该抓的抓到了，不该抓的没混进来。只验证前者是这个项目反复踩过的坑 ——
+加过滤条件时只确认「噪音没了」，结果把正常任务也一起滤掉，而且不报错。
+
+### 状态语义（写规则时对照）
+
+| kind | 什么时候用 |
+|---|---|
+| `start` | 任务开始或有新一轮活动 |
+| `waiting` | 卡在提问/授权上等用户 —— 最值钱，优先找这个信号 |
+| `done` | 正常结束 |
+| `failed` | 失败 |
+| `closed` | 会话关闭 |
+| `heartbeat` | 还活着，只刷新时间不改状态 |
+| `ignore` | 认识但不关心，不进面板也不留证 |
+
+规则按顺序匹配，第一条命中就停。特殊情况写前面，兜底写后面。
+
+---
+
 ## 不要做的事
 
 - **不要替用户点任何系统权限对话框**，也不要用 osascript 之类的方式绕过

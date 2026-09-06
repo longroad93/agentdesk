@@ -116,7 +116,12 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
 
     if (ev.kind === 'seen') { t.seen = true; continue; }
     // 回合结束 = 有东西等你看。用户重新在这个会话里说话，说明他回来了，自动算已读。
-    if ((ev.kind === 'done' || ev.kind === 'failed') && !ev.auto) t.seen = false;
+    // 但纠正型事件（auto）不是"又有新东西"，它只是把状态推回正轨；
+    // 而且既然坏状态被撤销了，未读也该跟着撤，否则面板上会留一条谁都不会去点的"完成"。
+    if (ev.kind === 'done' || ev.kind === 'failed') {
+      if (!ev.auto) t.seen = false;
+      else if (t.state === 'failed' || t.state === 'stale') t.seen = true;
+    }
     if (ev.kind === 'start') t.seen = true;
 
     // 后台任务状态不走事件，由服务端扫 tasks/ 目录现算（见 server.js 的 snapshot）。

@@ -66,6 +66,8 @@ function emit(def, name, payload, state) {
   if (!rule || rule.kind === 'ignore') return false;
   const map = { ...(def.map || {}), ...(rule.map || {}) };
   const ev = { agent: def.name || name, kind: rule.kind, confidence: def.confidence || 'exact' };
+  // 纠正型事件：只用来把状态推回正轨，不该让任务重新变成未读（见 store.js 里 seen 的处理）
+  if (rule.auto) ev.auto = true;
   for (const [f, expr] of Object.entries(map)) {
     const v = jsonPath(payload, expr);
     if ((f === 'summary' || f === 'prompt') && isMachineText(v)) continue;

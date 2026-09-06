@@ -6,7 +6,7 @@ English · [中文](./README.zh-CN.md)
 
 ---
 
-Once you run Claude Code, Codex and Kimi side by side, the real time sink isn't
+Once you run Claude Code, Codex and WorkBuddy side by side, the real time sink isn't
 forgetting whether something finished. It's an agent **sitting there waiting for your
 approval while you assume it's working**. The window is open, the cursor blinks, and
 twenty minutes later you find out it asked you something three minutes in.
@@ -163,7 +163,7 @@ the exit code, so a failed background job marks the whole task failed.
 | Claude Code | native hooks | ✅ | seconds |
 | Codex (ChatGPT app) | watches `~/.codex/sessions/**.jsonl` | ⚠️ no approval event seen yet | sub-second |
 | ~~Codex CLI `notify`~~ | disabled — ChatGPT app's internal subagents trigger it too, and the notify payload carries nothing to tell them apart | — | — |
-| Kimi Code | `notify` | ✅ | seconds |
+| Kimi Code | `notify` | ⚠️ **adapter written but never verified** — copied from Codex; the author's account was unusable at the time | — |
 | WorkBuddy | watches its sqlite `sessions` table | ⚠️ same | sub-second |
 | Anything else | `agentdesk run` wrapper | ❌ start/done/failed only | seconds |
 
@@ -183,48 +183,102 @@ agentdesk run --as kimi "refactor payments" -- kimi -p "..."
 
 ## Adding an agent
 
-Don't read docs or reverse-engineer binaries — make the agent hand over its data.
+**The premise: it has to write its state down somewhere.** A hook is ideal, but failing that
+there's always a session file, a database, or a log. Of the three agents supported here, only
+one has native hooks.
+
+### 1. Find where it writes state
+
+Check in this order, stop at the first hit:
 
 ```bash
-agentdesk probe myagent
+# Hooks / notify config? (best — sub-second, no polling)
+grep -rn "hooks\|notify" ~/.<agent>/*.json ~/.<agent>/*.toml 2>/dev/null
+
+# Session files? (next best — fs.watch still gets sub-second)
+find ~/.<agent> -name "*.jsonl" -o -name "*.json" | head
+
+# A database? (often the richest — status fields already exist)
+find ~/.<agent> -name "*.db" -o -name "*.sqlite" | head
+sqlite3 "file:<db>?mode=ro" ".tables"
 ```
 
-Point that at any hook slot the agent offers, run it once, and it dumps the raw
-`argv`, `stdin` and relevant env vars to `~/.agentdesk/probe-myagent.log`.
+### 2. Judge whether the signal is trustworthy
 
-Then write a JSON file into `~/.agentdesk/adapters/`:
+**Don't skip this — it determines the quality of the adapter.**
+
+| Deterministic | Guesswork |
+|---|---|
+| `status = 'completed'` | how long since the file changed |
+| `type: task_complete` | whether a process still exists |
+| `[exited with code 0]` | whether some keyword appeared in output |
+
+Guesswork can still work, but mark the adapter `"confidence": "guess"` — the panel then labels
+those tasks and de-emphasizes them. **Never let a guess look as certain as a hook.**
+
+Also watch out: **many agents spawn internal sub-sessions** (summaries, sub-agents). Those aren't
+user tasks and become noise. Look for a field that separates them — Codex has
+`session_meta.thread_source` (`user` / `subagent`), WorkBuddy has `is_background_automation`.
+
+### 3. Write the adapter
+
+One JSON file in `~/.agentdesk/adapters/`, no code:
 
 ```json
 {
   "name": "myagent",
-  "source": "argv",
-  "parse": "json:$LAST",
-  "map": {
-    "key": "$.turn-id",
-    "title": "$.input-messages[0]",
-    "summary": "$.last-assistant-message"
-  },
+  "source": "sqlite",
+  "db": "~/.myagent/data.db",
+  "query": "SELECT id, title, status FROM sessions WHERE updated_at > ? LIMIT 50",
+  "map": { "key": "$.id", "title": "$.title" },
   "rules": [
-    { "when": "$.type == agent-turn-complete", "kind": "done" },
-    { "when": "$.type ~= approval", "kind": "waiting" }
+    { "when": "$.status == running",   "kind": "start"   },
+    { "when": "$.status == completed", "kind": "done"    },
+    { "when": "$.status == error",     "kind": "failed"  },
+    { "when": "$.status ~= wait",      "kind": "waiting" }
   ]
 }
 ```
 
-`source` picks where data comes from: `stdin` (hooks over stdin, e.g. Claude Code),
-`argv` (JSON as a CLI argument), `watch-jsonl` (poll an append-only jsonl, reading only what's
-new), `sqlite` (poll a database table), `run` (wrap the command).
+| source | When | Example here |
+|---|---|---|
+| `stdin` | Hook delivers data on stdin | Claude Code hooks |
+| `argv` | Hook delivers data as a CLI arg | Codex CLI `notify` |
+| `watch-jsonl` | Append-only jsonl session log | Codex session stream |
+| `sqlite` | State lives in a database | WorkBuddy `sessions` |
+| `run` | None of the above — wrap the command | `agentdesk run "title" -- <cmd>` |
 
-Polling adapters can also declare an `index` to enrich rows from another file — that's how
-Codex session titles get pulled from `session_index.jsonl`.
+`kind` is one of `start` / `waiting` / `done` / `failed` / `closed` / `heartbeat` / `ignore`.
+**Rules match in order, first hit wins** — put specific cases first, fallbacks last.
 
-No code required. **PRs adding adapters are just a JSON file.**
+Optional fields: `session_filter` (drop whole sessions, e.g. internal sub-agents),
+`index` (enrich rows from another file), `foreground` (which app window this agent owns),
+`confidence`.
 
-The probe also runs passively: **anything an adapter fails to match gets recorded**. If a hook or
-notify call matches no rule, the raw payload lands in `~/.agentdesk/probe-<agent>.log` so you can
-write the rule from real data. Credential-like env vars are redacted, so the log is safe to paste
-into an issue.
+### 4. Verify
 
+```bash
+agentdesk serve --no-open
+agentdesk status
+cat ~/.agentdesk/events.jsonl | tail -5
+```
+
+**Anything an adapter fails to match is recorded** to `~/.agentdesk/probe-<agent>.log` so you can
+write the rule from real data. Credential-like env vars are redacted; safe to paste into an issue.
+
+### Let an AI do it
+
+Hand the repo to Claude Code / Codex and say:
+
+> Read AGENTS.md and the existing examples under adapters/, then write an adapter for <agent>.
+> First run the discovery commands from README step 1 to find where it writes state, tell me
+> what signal you found and why you trust it, and wait for my confirmation before writing JSON.
+> Don't guess at rules — if there's no deterministic signal, say so.
+
+That last sentence matters. **Guessing produces a panel that looks like it works but reports the
+wrong state**, which is worse than no panel.
+
+**PRs adding adapters are welcome — it's just a JSON file, no code changes.**
 
 ## Push to your phone
 

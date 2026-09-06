@@ -39,12 +39,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
 
         // nonactivatingPanel: 点面板不会把焦点从你正在打字的窗口抢走
         panel = NSPanel(contentRect: rect,
-                        styleMask: [.nonactivatingPanel, .titled, .closable, .resizable, .fullSizeContentView],
+                        styleMask: [.nonactivatingPanel, .titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                         backing: .buffered, defer: false)
         panel.level = .floating
         // 切到别的桌面/全屏应用时也跟着走，不然"常驻"就是假的
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = true
+        // NSPanel 默认不能最小化到 Dock，要显式允许；
+        // 同时 hidesOnDeactivate 必须关，否则最小化行为会和"失焦自动隐藏"打架
+        panel.styleMask.insert(.miniaturizable)
         panel.hidesOnDeactivate = false
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
@@ -127,6 +131,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         panel.setFrame(f, display: true, animate: animate)
         UserDefaults.standard.set(on, forKey: collapsedKey)
         web.evaluateJavaScript("window.__setCollapsed && window.__setCollapsed(\(on))", completionHandler: nil)
+    }
+
+    // 双击标题栏折叠 —— macOS 上的老习惯，比去点那个小箭头顺手。
+    // 返回 false 阻止系统默认的最大化/最小化行为。
+    func windowShouldZoom(_ w: NSWindow, toFrame: NSRect) -> Bool {
+        setCollapsed(panel.frame.height > collapsedH + 1)
+        return false
     }
 
     func windowDidMove(_ n: Notification) { saveFrame() }

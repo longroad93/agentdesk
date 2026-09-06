@@ -35,7 +35,7 @@ export function serve({ port } = {}) {
   port = port || cfg.port || 4517;
 
   let clients = new Set();
-  let lastSnapshot = new Map();   // id -> state，用来判断"变了才推通知"
+  let lastSnapshot = new Map();   // id -> `state:seen`，用来判断"变了才推通知"
 
   function snapshot() {
     const tasks = project(loadEvents(), { timeouts: cfg.timeouts, retention: cfg.retention });
@@ -149,7 +149,8 @@ export function serve({ port } = {}) {
     lastSnapshot = new Map(snapshot().map(t => [t.id, `${t.state}:${t.seen}`]));
     // 启动就先轮一次，否则打开面板要空等一个定时周期
     try { pollAll(adapters); } catch { /* 轮询失败不该拖住服务 */ }
-    lastSnapshot = new Map(snapshot().map(t => [t.id, t.state]));
+    // 必须和 diffAndBroadcast 里的 sig 同构，否则重启后第一次 diff 会把所有任务判成"变了"，全推一遍通知
+    lastSnapshot = new Map(snapshot().map(t => [t.id, `${t.state}:${t.seen}`]));
     process.stdout.write(`\n  agentdesk 面板  →  http://localhost:${port}\n  事件日志        →  ${EVENTS_FILE}\n\n  第一次打开请点「允许通知」，否则只有标签页标题会变。\n  Ctrl+C 退出。\n\n`);
   });
 

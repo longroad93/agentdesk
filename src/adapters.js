@@ -117,6 +117,7 @@ export function toEvent(def, raw, agentName) {
     kind: rule.kind,
     confidence: def.confidence || 'exact',
   };
+  if (rule.auto) ev.auto = true;
   for (const [field, expr] of Object.entries(map)) {
     let val;
     if (typeof expr === 'string' && expr.startsWith('@')) {

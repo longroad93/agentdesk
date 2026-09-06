@@ -6,7 +6,7 @@
 
 ---
 
-同时开着 Claude Code、Codex、Kimi 之后，真正浪费时间的不是"忘了它跑完没"，
+同时开着 Claude Code、Codex、WorkBuddy 之后，真正浪费时间的不是"忘了它跑完没"，
 而是它**卡在那儿等你确认，你却以为它在干活**。窗口开着，光标在闪，二十分钟后
 你才发现它三分钟前就问完了。
 
@@ -158,7 +158,7 @@ agentdesk 的条目、把 `notify` 还原成接管前的值、移除开机自启
 | Claude Code | 原生 hooks | ✅ | 秒级 |
 | Codex（ChatGPT app） | 监听会话流 `~/.codex/sessions/**.jsonl` | ⚠️ 未遇到过审批事件 | 亚秒 |
 | ~~Codex CLI `notify`~~ | 已停用 —— ChatGPT app 的内部子代理也会触发它，而 notify 的载荷里没有能区分"是不是你发起的"的字段 | — | — |
-| Kimi Code | `notify` | ✅ | 秒级 |
+| Kimi Code | `notify` | ⚠️ **adapter 写了但从未验证过** —— 照 Codex 抄的，作者的账号当时用不了 | — |
 | WorkBuddy | 监听它的 sqlite `sessions` 表 | ⚠️ 同上 | 亚秒 |
 | 任意命令 | `agentdesk run` 包装 | ❌ 只有跑完/失败 | 秒级 |
 
@@ -177,56 +177,130 @@ sqlite 里（带 `title` 和 `status`），Codex 把每轮对话追加进 jsonl�
 agentdesk run --as kimi "重构支付模块" -- kimi -p "..."
 ```
 
-## 加一个新 agent
+## 接入一个新的 agent
 
-不用读文档，也不用逆向二进制 —— 让它自己把数据交出来。
+**核心前提：它总得把状态写在某个地方。** 有钩子最好，没钩子也一定有会话文件、
+数据库或者日志 —— 找到那个地方就能接。这个项目支持的三个 agent 里，只有一个有原生钩子。
 
-第一步，把探针配到目标 agent 的任意钩子位置，跑一次：
+### 第一步：找它把状态写在哪
+
+按这个顺序查，找到一个就停：
 
 ```bash
-agentdesk probe myagent
+# 1. 有没有钩子/通知配置？（最理想，秒级且不用轮询）
+ls ~/.<agent>/          # 找 settings.json / config.toml
+grep -rn "hooks\|notify" ~/.<agent>/*.json ~/.<agent>/*.toml 2>/dev/null
+
+# 2. 有没有会话文件？（次选，文件监听也能做到亚秒级）
+find ~/.<agent> -name "*.jsonl" -o -name "*.json" | head
+# 找到后看它每轮写什么：
+tail -1 <会话文件> | python3 -m json.tool | head -30
+
+# 3. 有没有数据库？（往往质量最好，状态字段是现成的）
+find ~/.<agent> -name "*.db" -o -name "*.sqlite" | head
+sqlite3 "file:<库路径>?mode=ro" ".tables"
+sqlite3 "file:<库路径>?mode=ro" "PRAGMA table_info(sessions);"
+
+# 4. 是 GUI 应用、上面全没有？看它的 app 包
+find /Applications/<App>.app -name "*.json" -path "*hook*" 2>/dev/null
 ```
 
-它会把收到的 `argv`、`stdin`、相关环境变量原样 dump 到 `~/.agentdesk/probe-myagent.log`。
+### 第二步：判断这个信号靠不靠谱
 
-第二步，照着 dump 写一个 JSON 丢进 `~/.agentdesk/adapters/`：
+**这一步决定了 adapter 的质量，别跳过。**
+
+| 好信号（确定性） | 坏信号（靠猜） |
+|---|---|
+| 状态字段：`status = 'completed'` | 文件多久没动了 |
+| 明确的事件类型：`type: task_complete` | 进程还在不在 |
+| 退出标记：`[exited with code 0]` | 输出里有没有某个关键词 |
+
+拿不到确定性信号也能做，但要在 adapter 里标 `"confidence": "guess"`，
+面板会给这类任务加「(推测)」并降低视觉权重 —— **别让使用者以为推测出来的状态和钩子一样准。**
+
+还要留意一件事：**很多 agent 会为内部功能开子会话**（生成摘要、跑子代理），
+那些不是用户发起的任务，混进面板就是噪音。找找有没有能区分的字段，
+比如 Codex 的 `session_meta.thread_source`（`user` / `subagent`），
+或者 WorkBuddy 的 `is_background_automation`。
+
+### 第三步：写 adapter
+
+一个 JSON 文件丢进 `~/.agentdesk/adapters/`，不写代码：
 
 ```json
 {
   "name": "myagent",
-  "source": "argv",
-  "parse": "json:$LAST",
-  "map": {
-    "key": "$.turn-id",
-    "title": "$.input-messages[0]",
-    "summary": "$.last-assistant-message"
-  },
+  "source": "sqlite",
+  "db": "~/.myagent/data.db",
+  "query": "SELECT id, title, status FROM sessions WHERE updated_at > ? LIMIT 50",
+  "map": { "key": "$.id", "title": "$.title" },
   "rules": [
-    { "when": "$.type == agent-turn-complete", "kind": "done" },
-    { "when": "$.type ~= approval", "kind": "waiting" }
+    { "when": "$.status == running",   "kind": "start"   },
+    { "when": "$.status == completed", "kind": "done"    },
+    { "when": "$.status == error",     "kind": "failed"  },
+    { "when": "$.status ~= wait",      "kind": "waiting" }
   ]
 }
 ```
 
-`source` 决定数据从哪来：
+`source` 五选一：
 
-| source | 用于 | 例子 |
+| source | 什么时候用 | 本项目里的例子 |
 |---|---|---|
-| `stdin` | 钩子走标准输入 | Claude Code |
-| `argv` | 钩子走命令行参数 | Codex CLI 的 `notify` |
-| `watch-jsonl` | 轮询追加型 jsonl，只读新增部分 | Codex 的会话流 |
-| `sqlite` | 轮询数据库表 | WorkBuddy 的 `sessions` |
-| `run` | 什么钩子都没有，包命令 | 任意 CLI |
+| `stdin` | 有钩子，数据走标准输入 | Claude Code 的 hooks |
+| `argv` | 有钩子，数据走命令行参数 | Codex CLI 的 `notify` |
+| `watch-jsonl` | 会话是追加型 jsonl，监听新增行 | Codex 的会话流 |
+| `sqlite` | 状态存在数据库里 | WorkBuddy 的 `sessions` 表 |
+| `run` | 以上全没有，包住命令自己看 | `agentdesk run "标题" -- <命令>` |
 
-轮询型还能声明 `index`，从另一个文件补齐字段 —— Codex 的会话标题在
-`session_index.jsonl` 里而不在会话流里，就是这么接上的。
+`kind` 有这几种：
 
-不写一行代码。**欢迎 PR 新的 adapter —— 只是一个 JSON 文件。**
+| kind | 含义 |
+|---|---|
+| `start` | 任务开始 / 有新一轮活动 |
+| `waiting` | 卡在提问或授权上，**最值钱的信号** |
+| `done` | 正常结束 |
+| `failed` | 失败 |
+| `closed` | 会话关闭（跑到一半关掉算完成） |
+| `heartbeat` | 还活着，只刷新时间不改状态 |
+| `ignore` | 认识但不关心，不进面板也不留证 |
 
-探针还有个被动模式：**adapter 认不出来的数据会自动留证**。任何 hook 或 notify 调用没匹配到
-规则时，原始数据会写进 `~/.agentdesk/probe-<agent>.log`，你照着补一条 rule 就行 ——
-不用事先知道格式，也不用专门跑测试。日志里的凭证类环境变量会被脱敏，可以直接贴到 issue。
+**规则按顺序匹配，第一条命中就停**，所以特殊情况写前面、兜底写后面。
 
+几个可选字段：
+
+- `session_filter` —— 整个会话级的过滤，用来挡掉内部子代理（判定读文件头，不受读取进度影响）
+- `index` —— 从另一个文件补字段。Codex 的会话标题在 `session_index.jsonl` 里而不在会话流里
+- `foreground` —— 声明这个 agent 对应哪个 app 窗口，用于「你正开着它时不打扰你」
+- `confidence` —— `exact`（默认）或 `guess`
+
+### 第四步：验证
+
+```bash
+agentdesk serve --no-open        # 重启服务加载新 adapter
+agentdesk status                 # 看有没有抓到
+cat ~/.agentdesk/events.jsonl | tail -5
+```
+
+**adapter 认不出来的数据会自动留证**到 `~/.agentdesk/probe-<agent>.log`，
+照着补规则就行 —— 不用事先知道全部格式。日志里的凭证类环境变量会脱敏，可以直接贴 issue。
+
+有钩子的 agent 还可以主动探：把 `agentdesk probe <名字>` 配到它的钩子位置跑一次，
+收到的 `argv` / `stdin` / 环境变量会原样 dump 下来。
+
+### 让 AI 替你做这件事
+
+上面这套流程是可以交给 AI 的。把仓库丢给 Claude Code / Codex，然后：
+
+> 读这个项目的 AGENTS.md 和 adapters/ 下的现有例子，帮我给 <agent 名字> 写一个 adapter。
+> 先按 README「接入一个新的 agent」第一步的命令查清楚它把状态写在哪，
+> 把你找到的信号源和判断依据告诉我，我确认之后你再写 JSON。
+> 不要凭猜测写规则，找不到确定性信号就直接说找不到。
+
+最后那句很重要 —— **不确定的时候硬写规则，会做出一个"看起来在工作但状态是错的"面板**，
+那比没有面板更糟。
+
+**欢迎 PR 新的 adapter —— 只是一个 JSON 文件，不用改代码。**
 
 ## 推到手机
 
