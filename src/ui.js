@@ -192,7 +192,8 @@ const JS = [
   '      if(t.summary||t.prompt) bits.push(t.summary||t.prompt);',
   '      var sub = "<span class=who>"+esc(t.agent)+"</span>" + (bits.length? " "+esc(bits.join(" · ")) : "");',
   '      return "<div class=\\"task"+(unread?" unread":"")+(t.id===firstDone?" groupstart":"")+"\\" data-id=\\""+esc(t.id)+"\\" style=\\"--bar:"+st.color+"\\">"+',
-  '        "<span class=badge>"+(st.mark||st.icon)+"</span>"+',
+  // 紧凑模式只有符号没有文字，鼠标停上去得能看出是什么状态
+  '        "<span class=badge title=\\""+esc(st.label)+"\\">"+(st.mark||st.icon)+"</span>"+',
   '        "<div class=main><div class=title>"+esc(t.title)+"</div>"+',
   '        (sub?"<div class=sub>"+sub+"</div>":"")+"</div>"+',
   '        "<span class=when>"+ageShort(now-t.last_seen)+"</span></div>";',

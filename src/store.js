@@ -135,6 +135,8 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
     // 事件是一次性的：bg_start 没等到配对的 bg_done，状态就被永久钉在"后台跑着"。
     if (ev.kind === 'bg_start' || ev.kind === 'bg_done') continue;
 
+    if (ev.kind === 'waiting') t.waiting_since = ev.ts;
+
     if (ev.kind === 'closed') {
       // 会话关掉了：跑到一半算失败，已完成的保持完成
       if (t.state === 'running' || t.state === 'waiting') t.state = 'done';
@@ -158,6 +160,18 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
     t.title = t.prompt ? titleFromPrompt(t.prompt)
             : t.cwd ? (t.cwd.split(/[/\\]/).filter(Boolean).pop() || t.cwd)
             : t.key.slice(0, 12);
+  }
+
+  // "等你确认"是个瞬时事件，不是持续状态。你批准之后 agent 继续干活，
+  // 不会再触发任何钩子（要等到 Stop），状态就永远卡在"等你"上。
+  // transcript 在那条 waiting 之后还在写，就说明早就不等了。
+  for (const t of tasks.values()) {
+    if (t.state !== 'waiting' || !t.transcript || !t.waiting_since) continue;
+    try {
+      const m = statSync(t.transcript).mtimeMs;
+      // 宽限 15 秒：钩子触发的当下 transcript 本来就会写一笔，那不算"恢复"
+      if (m > t.waiting_since + 15_000) t.state = 'running';
+    } catch { /* transcript 没了就维持原状 */ }
   }
 
   // 中断没有任何钩子。claude 干活时持续写 transcript，停笔就说明这轮停了。
