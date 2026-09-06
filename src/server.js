@@ -42,7 +42,8 @@ export function serve({ port } = {}) {
     for (const t of tasks) {
       // 后台任务不看事件看目录：子 agent 那类根本不经过 PostToolUse，
       // 但只要起了后台任务就一定有 .output 文件。扫描是幂等的，跑完自己就变回 done。
-      if (!t.transcript && t.agent !== 'claude') continue;
+      // 这个目录结构是 claude code 特有的，别的 agent 扫了也是白扫。
+      if (t.agent !== 'claude') continue;
       const bg = scanBackground(t.key);
       const running = {};
       for (const [id, v] of Object.entries(bg)) if (v.running) running[id] = v;
@@ -68,7 +69,9 @@ export function serve({ port } = {}) {
     if (changedByPoll) tasks = snapshot();
     const changed = [];
     for (const t of tasks) {
-      const sig = `${t.state}:${t.seen}`;
+      // 签名里带上标题和后台数：会话标题是后来才生成的，后台任务数也会变，
+      // 只看 state:seen 的话这些变化要等 20 秒定时器才推到面板
+      const sig = `${t.state}:${t.seen}:${t.title}:${Object.keys(t.bg || {}).length}`;
       if (lastSnapshot.get(t.id) !== sig) {
         changed.push(t);
         lastSnapshot.set(t.id, sig);
@@ -123,19 +126,6 @@ export function serve({ port } = {}) {
         } catch { /* 坏请求忽略 */ }
         res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}');
         setTimeout(diffAndBroadcast, 60);
-      });
-      return;
-    }
-
-    if (url.pathname === '/api/dismiss' && req.method === 'POST') {
-      let body = '';
-      req.on('data', c => body += c);
-      req.on('end', () => {
-        try {
-          const { id } = JSON.parse(body || '{}');
-          lastSnapshot.delete(id);
-        } catch {}
-        res.writeHead(200).end('{}');
       });
       return;
     }

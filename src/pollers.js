@@ -3,8 +3,12 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, openSync, readSync, closeSync, watch } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { createRequire } from 'node:module';
 import { append, HOME, ensureHome } from './store.js';
 import { evalWhen, jsonPath, isMachineText } from './adapters.js';
+
+// node:sqlite 目前只有 CommonJS 入口，ESM 里得借 require
+const require = createRequire(import.meta.url);
 
 const STATE_FILE = join(HOME, 'poll-state.json');
 const FRESH_MS = 6 * 60 * 60 * 1000;    // 只回溯 6 小时内动过的会话，别把半年历史全灌进来
@@ -174,9 +178,6 @@ function pollSqlite(def, name, state) {
   for (const r of rows) if (emit(def, name, r, state)) n++;
   return n;
 }
-
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 
 export function pollAll(adapters) {
   const state = loadState();

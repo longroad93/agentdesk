@@ -112,7 +112,11 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
     // 摘要是绑在状态上的：waiting 时那句"需要授权"在任务完成后就是误导，得清掉
     else if (ev.kind === 'done' || ev.kind === 'failed' || ev.kind === 'start') t.summary = '';
     if (ev.confidence) t.confidence = ev.confidence;
-    t.last_seen = ev.ts;
+    // last_seen 是"agent 最后一次真实活动"，排序和退场都靠它。
+    // 你点"已读"不是 agent 的活动；客户端重启时几十个会话同时 SessionEnd 也不是。
+    // 这两种事件之前都在刷 last_seen，结果点一次"全部已读"，37 条几天前的任务
+    // 全跳到了列表最前面，显示"7 分钟前"。
+    if (ev.kind !== 'seen' && ev.kind !== 'closed') t.last_seen = ev.ts;
 
     if (ev.kind === 'seen') { t.seen = true; continue; }
     // 回合结束 = 有东西等你看。用户重新在这个会话里说话，说明他回来了，自动算已读。
@@ -137,6 +141,16 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
     }
   }
 
+  // 标题兜底单独一轮，不能和下面的超时判定混在一个循环里 ——
+  // 那个循环里有 continue，之前兜底写在它后面，transcript 活跃的任务全被跳过，
+  // 面板上就出现了标题为空、只剩副行的条目。
+  for (const t of tasks.values()) {
+    if (t.title) continue;
+    t.title = t.prompt ? titleFromPrompt(t.prompt)
+            : t.cwd ? (t.cwd.split(/[/\\]/).filter(Boolean).pop() || t.cwd)
+            : t.key.slice(0, 12);
+  }
+
   // 中断没有任何钩子。claude 干活时持续写 transcript，停笔就说明这轮停了。
   // 关键是这里"每次投影现算"而不是写一条 done 事件 —— 会话一旦恢复写入，
   // 状态自己就回到运行中。用事件表达持续观察出来的状态，只会把状态钉死。
@@ -149,24 +163,18 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
 
   // 关键的一步：没有任何 agent 会主动告诉你"我死了"，只能靠心跳超时兜住
   for (const t of tasks.values()) {
-    if (t.state === 'running' || t.state === 'waiting') {
-      const limit = timeouts[t.agent] ?? timeouts.default ?? DEFAULT_TIMEOUT;
-      // 长时间没有新事件不等于失联：agent 可能正在跑一个很久的工具调用。
-      // transcript 还在写就说明它活着，这比事件时间戳可靠。
-      if (t.transcript) {
-        try {
-          if (now - statSync(t.transcript).mtimeMs <= limit) continue;
-        } catch { /* transcript 没了，按事件时间判 */ }
-      }
-      if (now - t.last_seen > limit) {
-        t.stale_from = t.state;
-        t.state = 'stale';
-      }
+    if (t.state !== 'running' && t.state !== 'waiting') continue;
+    const limit = timeouts[t.agent] ?? timeouts.default ?? DEFAULT_TIMEOUT;
+    // 长时间没有新事件不等于失联：agent 可能正在跑一个很久的工具调用。
+    // transcript 还在写就说明它活着，这比事件时间戳可靠。
+    if (t.transcript) {
+      try {
+        if (now - statSync(t.transcript).mtimeMs <= limit) continue;
+      } catch { /* transcript 没了，按事件时间判 */ }
     }
-    if (!t.title) {
-      t.title = t.prompt ? t.prompt.slice(0, 40)
-              : t.cwd ? t.cwd.split(/[/\\]/).filter(Boolean).pop()
-              : t.key.slice(0, 12);
+    if (now - t.last_seen > limit) {
+      t.stale_from = t.state;
+      t.state = 'stale';
     }
   }
 
@@ -180,6 +188,18 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
       return now - t.last_seen <= keepMs;
     })
     .sort(byUrgency);
+}
+
+// 没有会话标题时拿第一句话凑。claude code 的 prompt 常以 @文件引用 开头，
+// 那种当标题就是一串路径，剥掉再取。
+function titleFromPrompt(p) {
+  let s = String(p).trim();
+  // @"path with spaces" 或 @path/to/file，可能连续好几个
+  s = s.replace(/^(@"[^"]*"\s*|@\S+\s*)+/, '').trim();
+  if (!s) s = String(p).trim();
+  // 到第一个句末标点为止，多半就是一句完整的话
+  const m = s.match(/^[^。！？!?\n]{4,60}/);
+  return (m ? m[0] : s.slice(0, 40)).trim();
 }
 
 // 先按组（进行中 / 已结束），组内按时间。见 states.js 的 GROUP。

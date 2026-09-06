@@ -17,7 +17,6 @@ export function needsAttention(t) {
   return ATTENTION.includes(t.state) || (t.state === 'done' && t.seen === false);
 }
 
-// 排序权重：等你 > 失联 > 失败 > 后台还在跑 > 完成 > 运行中
 // 面板首先要回答"现在有哪些 agent 在动"，其次才是"刚才发生了什么"。
 // 所以先分两组，组内再排 —— 而不是把所有状态拉平成一个优先级序列。
 export const GROUP = {

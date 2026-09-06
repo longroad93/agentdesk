@@ -67,10 +67,10 @@ const CSS = [
   'body.compact .main{grid-column:2;min-width:0}',
   'body.compact .title{font-size:12.5px;font-weight:600;line-height:1.35}',
   'body.compact .sub{font-size:10.5px;color:var(--dim);margin-top:2px;',
+  '  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   'body.compact .who{color:var(--fg);opacity:.75;font-weight:600;',
   '  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9.5px;',
   '  letter-spacing:.2px;margin-right:2px}',
-  '  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   'body.compact .when{grid-column:3;font-size:10px;color:var(--dim);white-space:nowrap}',
   'body.compact .empty{padding:40px 16px;font-size:11.5px}',
   'body.compact button.more{border:0;border-top:1px solid var(--line);border-radius:0;',
@@ -206,9 +206,10 @@ const JS = [
   '      (bgN?"<span style=\'color:#06b6d4\'>⏳ "+bgN+" 个后台任务在跑</span>":"")+',
   '      (t.cwd?"<code>"+esc(shortCwd(t.cwd))+"</code>":"")+',
   '      "<span>"+age(now-t.last_seen)+"前</span></div></div></div>";',
-  '  }).join("") + (hidden?"<button id=more class=more>还有 "+hidden+" 条更早的"+(hiddenUnread?"（"+hiddenUnread+" 条没看过）":"")+"</button>":"");',
+  '  }).join("") + (hidden?"<button id=more class=more>还有 "+hidden+" 条更早的"+(hiddenUnread?"（"+hiddenUnread+" 条没看过）":"")+"</button>"',
+  '    : window.__expanded?"<button id=more class=more>收起更早的</button>":"");',
   '  var mb=document.getElementById("more");',
-  '  if(mb)mb.onclick=function(){window.__expanded=true;render(tasks);};',
+  '  if(mb)mb.onclick=function(){window.__expanded=!window.__expanded;render(tasks);};',
   '  document.title=(need.length?"("+need.length+") ":"")+"agentdesk";',
   '  var top=need.length?(STATES[need[0].state]||{}).color:"#10b981";',
   '  setFavicon(top||"#10b981",need.length);',
@@ -228,6 +229,8 @@ const JS = [
   '  }',
   '}',
 
+  // 声明放 notify 前面。var 提升让运行时不出错，但读代码的人不该靠这个
+  'var reminded={}, REMIND_MS=90000;',
   'function notify(changed){',
   '  changed.forEach(function(t){',
   '    var st=STATES[t.state]; if(!st||st.notify==="never") return;',
@@ -249,7 +252,6 @@ const JS = [
 
   // macOS 的横幅样式几秒就消失，一条通知很容易错过。
   // 所以没处理掉的任务会周期性重提醒，直到状态变化或你点掉。
-  'var reminded={}, REMIND_MS=90000;',
   'function sweepReminders(){',
   '  if(!window.__last) return;',
   '  var now=Date.now();',
