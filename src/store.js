@@ -15,6 +15,10 @@ const MAX_BYTES = 2 * 1024 * 1024;   // 超过就砍掉前半，日志不需要�
 const DEFAULT_TIMEOUT = 15 * 60 * 1000;
 const IDLE_TURN_MS = 90 * 1000;   // transcript 停笔多久算这一轮停了
 const DEFAULT_RETENTION = 12 * 60 * 60 * 1000;   // 看过的完成任务保留多久
+// "等你"要等多久才认为那个窗口其实已经关了。必须远大于常规超时：
+// agent 在等你的时候本来就停着不动，拿常规超时判它会把"需要你处理"
+// 误报成"崩了"—— 那是这个面板最不该犯的错。
+const WAITING_STALE_MS = 6 * 60 * 60 * 1000;
 
 export function ensureHome() {
   if (!existsSync(HOME)) mkdirSync(HOME, { recursive: true });
@@ -86,7 +90,7 @@ const TRANSITIONS = {
   closed:    null,      // 特判见下
 };
 
-export function project(events, { now = Date.now(), timeouts = {}, retention } = {}) {
+export function project(events, { now = Date.now(), timeouts = {}, retention, skipRetention = false } = {}) {
   const tasks = new Map();
 
   for (const ev of events) {
@@ -187,7 +191,9 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
   // 关键的一步：没有任何 agent 会主动告诉你"我死了"，只能靠心跳超时兜住
   for (const t of tasks.values()) {
     if (t.state !== 'running' && t.state !== 'waiting') continue;
-    const limit = timeouts[t.agent] ?? timeouts.default ?? DEFAULT_TIMEOUT;
+    const base = timeouts[t.agent] ?? timeouts.default ?? DEFAULT_TIMEOUT;
+    // "等你"用一把长得多的尺子量，理由见 WAITING_STALE_MS
+    const limit = t.state === 'waiting' ? Math.max(base * 8, WAITING_STALE_MS) : base;
     // 长时间没有新事件不等于失联：agent 可能正在跑一个很久的工具调用。
     // transcript 还在写就说明它活着，这比事件时间戳可靠。
     if (t.transcript) {
@@ -201,16 +207,23 @@ export function project(events, { now = Date.now(), timeouts = {}, retention } =
     }
   }
 
-  // 面板会无限增长。已经看过的完成任务过一段时间就该退场；
-  // 但没看过的、还需要你处理的，无论多老都留着 —— 那正是它存在的意义。
+  const out = [...tasks.values()];
+  // 退场判定要放在后台任务算完之后（那是 server 的 snapshot 干的），
+  // 否则一个 12 小时前完成、已读、但后台还在跑的任务会被提前踢出面板。
+  return (skipRetention ? out : applyRetention(out, { now, retention })).sort(byUrgency);
+}
+
+// 面板会无限增长。已经看过的完成任务过一段时间就该退场；
+// 但没看过的、还需要你处理的、后台还在跑的，无论多老都留着 ——
+// 那正是这个面板存在的意义。
+export function applyRetention(tasks, { now = Date.now(), retention } = {}) {
   const keepMs = retention ?? DEFAULT_RETENTION;
-  return [...tasks.values()]
-    .filter(t => {
-      if (t.state === 'waiting' || t.state === 'stale' || t.state === 'failed') return true;
-      if (t.state === 'done' && t.seen === false) return true;
-      return now - t.last_seen <= keepMs;
-    })
-    .sort(byUrgency);
+  return tasks.filter(t => {
+    if (t.state === 'waiting' || t.state === 'stale' || t.state === 'failed') return true;
+    if (t.state === 'bgrun' || Object.keys(t.bg || {}).length) return true;
+    if (t.state === 'done' && t.seen === false) return true;
+    return now - t.last_seen <= keepMs;
+  });
 }
 
 // 从 transcript 里捞会话标题。

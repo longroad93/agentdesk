@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { dirname, join as pathJoin } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { watch, existsSync } from 'node:fs';
-import { loadEvents, project, loadConfig, EVENTS_FILE, HOME, ensureHome, append, byUrgency } from './store.js';
+import { loadEvents, project, loadConfig, EVENTS_FILE, HOME, ensureHome, append, byUrgency, applyRetention } from './store.js';
 import { STATES, ATTENTION, needsAttention } from './states.js';
 import { Script } from 'node:vm';
 import { renderHTML } from './ui.js';
@@ -38,8 +38,9 @@ export function serve({ port } = {}) {
   let lastSnapshot = new Map();   // id -> `state:seen`，用来判断"变了才推通知"
 
   function snapshot() {
-    const tasks = project(loadEvents(), { timeouts: cfg.timeouts, retention: cfg.retention });
-    for (const t of tasks) {
+    // 先不做退场过滤：后台任务是下面才算出来的，提前过滤会把"后台还在跑"的老任务踢掉
+    const all = project(loadEvents(), { timeouts: cfg.timeouts, skipRetention: true });
+    for (const t of all) {
       // 后台任务不看事件看目录：子 agent 那类根本不经过 PostToolUse，
       // 但只要起了后台任务就一定有 .output 文件。扫描是幂等的，跑完自己就变回 done。
       // 这个目录结构是 claude code 特有的，别的 agent 扫了也是白扫。
@@ -54,7 +55,7 @@ export function serve({ port } = {}) {
       else if (!hasBg && t.state === 'bgrun') t.state = 'done';
     }
     // 上面改过 state（done → bgrun），排序是 project 里按旧状态做的，得重来一次
-    tasks.sort(byUrgency);
+    const tasks = applyRetention(all, { retention: cfg.retention }).sort(byUrgency);
     return tasks.map(t => ({ ...t, needs: needsAttention(t) }));
   }
 
