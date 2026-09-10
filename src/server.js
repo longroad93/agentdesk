@@ -55,7 +55,10 @@ export function serve({ port } = {}) {
       else if (!hasBg && t.state === 'bgrun') t.state = 'done';
     }
     // 上面改过 state（done → bgrun），排序是 project 里按旧状态做的，得重来一次
-    const tasks = applyRetention(all, { retention: cfg.retention }).sort(byUrgency);
+    const tasks = applyRetention(all, {
+      retention: cfg.retention,
+      attentionRetention: cfg.attentionRetention,
+    }).sort(byUrgency);
     return tasks.map(t => ({ ...t, needs: needsAttention(t) }));
   }
 

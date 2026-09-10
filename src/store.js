@@ -15,6 +15,12 @@ const MAX_BYTES = 2 * 1024 * 1024;   // 超过就砍掉前半，日志不需要�
 const DEFAULT_TIMEOUT = 15 * 60 * 1000;
 const IDLE_TURN_MS = 90 * 1000;   // transcript 停笔多久算这一轮停了
 const DEFAULT_RETENTION = 12 * 60 * 60 * 1000;   // 看过的完成任务保留多久
+// 没看过的、失败的、失联的保留多久。以前是"永远"——前提是已读能自动发生，
+// 但会话级已读一直做不成，只有在面板上点或者回那个会话说话才算看过。
+// 你在 agent 窗口里早看过了却没点面板，它就永远是未读、永远不退场，
+// 实测 35 条里 28 条是超过 24 小时的积压。24 小时还没顾上的，
+// 要么不重要，要么早在别处处理过了，继续提醒只是噪音。
+const ATTENTION_RETENTION = 24 * 60 * 60 * 1000;
 // "等你"要等多久才认为那个窗口其实已经关了。必须远大于常规超时：
 // agent 在等你的时候本来就停着不动，拿常规超时判它会把"需要你处理"
 // 误报成"崩了"—— 那是这个面板最不该犯的错。
@@ -216,13 +222,17 @@ export function project(events, { now = Date.now(), timeouts = {}, retention, sk
 // 面板会无限增长。已经看过的完成任务过一段时间就该退场；
 // 但没看过的、还需要你处理的、后台还在跑的，无论多老都留着 ——
 // 那正是这个面板存在的意义。
-export function applyRetention(tasks, { now = Date.now(), retention } = {}) {
+export function applyRetention(tasks, { now = Date.now(), retention, attentionRetention } = {}) {
   const keepMs = retention ?? DEFAULT_RETENTION;
+  const attnMs = attentionRetention ?? ATTENTION_RETENTION;
   return tasks.filter(t => {
-    if (t.state === 'waiting' || t.state === 'stale' || t.state === 'failed') return true;
-    if (t.state === 'bgrun' || Object.keys(t.bg || {}).length) return true;
-    if (t.state === 'done' && t.seen === false) return true;
-    return now - t.last_seen <= keepMs;
+    // 真在跑的无论多久都留着——那是"现在"，不是历史
+    if (t.state === 'running' || t.state === 'bgrun' || Object.keys(t.bg || {}).length) return true;
+    const age = now - t.last_seen;
+    // 需要你注意的留得久一点，但也有头，见 ATTENTION_RETENTION
+    const needs = t.state === 'waiting' || t.state === 'stale' || t.state === 'failed'
+               || (t.state === 'done' && t.seen === false);
+    return age <= (needs ? attnMs : keepMs);
   });
 }
 

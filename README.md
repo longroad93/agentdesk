@@ -134,6 +134,15 @@ notifications stay quiet, but the unread marks remain**. Walk away and the remin
 
 Tasks you interrupted yourself don't count as unread. You stopped them; you know.
 
+**Unread has a limit, though: 24 hours.** Anything you haven't gotten to by then is either
+unimportant or something you already read in the agent's own window without coming back to click
+the panel — read receipts only happen through the two paths above, so that's common. Leaving them
+up just buries what's actually new. Failed and stale tasks follow the same rule. Tasks still
+running are exempt.
+
+To keep them longer, set `"attentionRetention"` (ms) in `~/.agentdesk/config.json`. Nothing is
+deleted — they just stop showing on the panel.
+
 ## States
 
 | State | Meaning |
@@ -142,7 +151,7 @@ Tasks you interrupted yourself don't count as unread. You stopped them; you know
 | ⚠ Stale | No activity past the timeout. Crashed, terminal closed, machine slept |
 | ✕ Failed | Non-zero exit |
 | ⏳ Background | Main turn ended but background commands are still running |
-| ✓ Done | Finished normally. **Stays flagged unread until you look at it** |
+| ✓ Done | Finished normally. Flagged unread until you look at it, for up to 24 hours |
 | ▶ Running | Working, ignore it |
 | ⏸ Idle | Session went quiet without a proper ending; resumes automatically if it comes back |
 
