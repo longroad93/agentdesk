@@ -8,23 +8,13 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { HOME, ensureHome } from './store.js';
+import { nodeBin } from './util.js';
 
 const LABEL = 'com.agentdesk.server';
 const plistPath = () => join(homedir(), 'Library/LaunchAgents', LABEL + '.plist');
 const vbsPath = () => join(process.env.APPDATA || homedir(),
   'Microsoft/Windows/Start Menu/Programs/Startup/agentdesk.vbs');
 
-function nodeBin() {
-  try {
-    const p = execFileSync(process.platform === 'win32' ? 'where' : 'command',
-      process.platform === 'win32' ? ['node'] : ['-v', 'node'],
-      { encoding: 'utf8' }).trim().split(/\r?\n/)[0];
-    // Homebrew 的 process.execPath 带版本号（.../Cellar/node/25.2.1/...），
-    // node 一升级自启就废了，优先用 PATH 里的软链
-    if (p && !p.includes('/Cellar/')) return p;
-  } catch { /* 落回 execPath */ }
-  return process.execPath;
-}
 
 export function installAutostart({ dir, panel = true, off = false } = {}) {
   if (off) return remove();

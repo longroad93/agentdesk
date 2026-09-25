@@ -1,0 +1,78 @@
+:root{--bg:#fbfbfd;--card:#fff;--fg:#18181b;--dim:#71717a;--line:#e4e4e7;--shadow:0 1px 3px rgba(0,0,0,.06);--alert:#f59e0b}
+@media(prefers-color-scheme:dark){:root{--bg:#0b0b0e;--card:#16161a;--fg:#f4f4f5;--dim:#8b8b95;--line:#26262c;--shadow:none}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;padding:24px;max-width:820px;margin:0 auto}
+header{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+h1{font-size:15px;font-weight:600;letter-spacing:.3px}
+#count{font-size:12px;color:var(--dim);margin-right:auto}
+/* 有东西在等你：计数用它的颜色，一眼能看出来 */
+body.alert #count{color:var(--alert);font-weight:600}
+button{font:inherit;font-size:12px;padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:7px;cursor:pointer}
+button:hover{border-color:var(--dim)}
+button.on{background:#3b82f6;border-color:#3b82f6;color:#fff}
+#allseen,#fold{display:none}
+body.shell #try{display:none}
+
+#warn{margin:-8px 0 14px;padding:8px 12px;border-radius:8px;font-size:12px;background:color-mix(in srgb,#f59e0b 16%,var(--card));border:1px solid color-mix(in srgb,#f59e0b 40%,var(--line))}
+
+.task{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--bar);border-radius:9px;padding:13px 15px;margin-bottom:9px;box-shadow:var(--shadow);display:flex;gap:13px;align-items:flex-start;cursor:default}
+/* 需要你处理的（等你、没看过的完成/失败/失联）：左侧圆点 + 一抹状态色 */
+.task.needs{background:linear-gradient(90deg,color-mix(in srgb,var(--bar) 7%,var(--card)),var(--card) 60%)}
+.task.unread{cursor:pointer}
+.dot{width:7px;height:7px;border-radius:50%;background:transparent;flex:none;margin-top:6px}
+.task.needs .dot{background:var(--bar)}
+.badge{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--bar);background:color-mix(in srgb,var(--bar) 12%,transparent);padding:4px 9px;border-radius:6px;white-space:nowrap}
+.main{min-width:0;flex:1}
+.title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.summary{color:var(--dim);font-size:13px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task.waiting .summary{color:var(--fg)}
+.meta{color:var(--dim);font-size:12px;margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.meta code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;background:var(--bg);padding:1px 5px;border-radius:4px}
+.bgn{color:#06b6d4}
+.ask{display:inline-block;font-size:10px;line-height:1.5;padding:0 5px;margin-right:6px;border-radius:4px;border:1px solid var(--line);color:var(--dim);vertical-align:1px}
+.go{font-size:11px;padding:1px 8px;margin-left:auto}
+.guess{opacity:.65}
+.empty{text-align:center;color:var(--dim);padding:60px 20px;font-size:13px}
+.pulse,.task.waiting .badge{animation:p 2s ease-in-out infinite}
+@keyframes p{50%{opacity:.45}}
+button.more{width:100%;margin-top:4px;color:var(--dim)}
+
+/* 紧凑模式是另一种排版，不是把大面板等比缩小：
+   340px 宽放不下卡片那套留白，改成清单 —— 细分隔线、单行标题、右对齐时间。 */
+body.compact{padding:0;max-width:none;background:var(--bg)}
+body.compact header{position:sticky;top:0;z-index:2;margin:0;padding:9px 12px;background:var(--bg);border-bottom:1px solid var(--line);gap:8px;flex-wrap:nowrap}
+/* 折叠成一条时只剩这一行，有东西等你就整条染色 */
+body.compact.alert header{background:color-mix(in srgb,var(--alert) 16%,var(--bg))}
+body.compact h1{font-size:11.5px;letter-spacing:.2px}
+body.compact #count{font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body.compact button{font-size:10.5px;padding:2px 7px;border-radius:5px;white-space:nowrap;flex:none}
+body.compact #try{display:none}
+body.compact.shell #fold{display:inline-block;padding:2px 8px}
+body.compact.folded #list,body.compact.folded #warn{display:none}
+body.compact.folded header{border-bottom:0}
+body.compact #warn{margin:0;border-radius:0;border-width:0 0 1px;padding:5px 12px;font-size:10.5px}
+body.compact #list{padding:0}
+body.compact .task{display:grid;grid-template-columns:auto 1fr auto;align-items:baseline;gap:7px;padding:8px 12px;margin:0;border:0;border-radius:0;box-shadow:none;border-bottom:1px solid var(--line);background:var(--card)}
+body.compact .task:last-of-type{border-bottom:0}
+body.compact .task.needs{background:color-mix(in srgb,var(--bar) 6%,var(--card))}
+/* 两组之间给一条实的分界，别让"在跑的"和"跑完的"糊成一片 */
+body.compact .task.groupstart{border-top:6px solid var(--bg);margin-top:-1px}
+body.compact .badge{background:none;padding:0;font-size:11px;color:var(--bar);line-height:1.4;width:14px;text-align:center;flex:none}
+body.compact .dot{display:none}
+body.compact .main{grid-column:2;min-width:0}
+body.compact .title{font-size:12.5px;font-weight:600;line-height:1.35}
+/* 强弱按"要不要你处理"分，而不是按"读没读过"：以前"等你"的已读标记通常是真，
+   被画成灰色标题 + 半透明标记，是整张清单里最不显眼的一行 */
+body.compact .task.needs .title{font-weight:650}
+body.compact .task.needs .title::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--bar);margin-right:6px;vertical-align:middle;position:relative;top:-1px}
+body.compact .task.quiet .title{font-weight:500;color:var(--dim)}
+body.compact .task.quiet .badge{opacity:.5}
+body.compact .sub{font-size:10.5px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body.compact .task.waiting .sub{color:var(--fg)}
+body.compact .who{color:var(--fg);opacity:.75;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9.5px;letter-spacing:.2px;margin-right:2px}
+body.compact .when{grid-column:3;font-size:10px;color:var(--dim);white-space:nowrap}
+body.compact .go{border:0;background:none;padding:0 0 0 6px;font-size:11px;color:var(--dim);visibility:hidden}
+body.compact .task:hover .go{visibility:visible}
+body.compact .go:hover{color:var(--fg)}
+body.compact .empty{padding:40px 16px;font-size:11.5px}
+body.compact button.more{margin:0;border:0;border-top:1px solid var(--line);border-radius:0;padding:8px;background:var(--bg)}

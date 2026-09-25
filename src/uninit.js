@@ -8,8 +8,8 @@ import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { loadAdapters } from './adapters.js';
 import { loadConfig, saveConfig, HOME } from './store.js';
+import { expand } from './util.js';
 
-const expand = p => p.replace(/^~/, homedir());
 const isOurs = s => /agentdesk/i.test(String(s));
 
 export async function uninit({ dryRun = false, purge = false } = {}) {
@@ -115,7 +115,7 @@ function removeAutostart(dryRun) {
 function killRunning(dryRun) {
   if (dryRun) return ['ok', '会停掉服务和悬浮窗'];
   let n = 0;
-  for (const pat of ['agentdesk.js serve', 'agentdesk-panel', 'AgentdeskHelper']) {
+  for (const pat of ['agentdesk.js serve', 'AgentdeskPanel', 'agentdesk-panel', 'AgentdeskHelper']) {
     try { execFileSync('pkill', ['-f', pat], { stdio: 'ignore' }); n++; } catch { /* 没在跑 */ }
   }
   return ['ok', n ? '已停掉在跑的进程' : '没有在跑的进程'];

@@ -1,42 +1,60 @@
-// claude code 的后台任务没有专属钩子，但它会把 [exited with code N] 写进 output 文件末尾。
+// claude code 的后台任务没有专属钩子，但不管谁起的（Bash 的 run_in_background、子 agent），
+// 都会在 <tmp>/claude-<uid>/<项目>/<会话>/tasks/ 下开一个 .output，跑完往末尾写 [exited with code N]。
 // 这是确定性信号，不是靠静默时间猜的。
-import { existsSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+//
+// 注意前台命令跑的时候也会在这里开 .output（跑完就删）。哪些是真后台，由 transcript 决定，见 view 层。
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, realpathSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { append } from './store.js';
 
 const EXIT_RE = /\[exited with code (-?\d+)\]/;
-const BG_MAX_AGE = 4 * 60 * 60 * 1000;   // 找不到就挂着不合适，4 小时后放弃
-const pathCache = new Map();
+const INDEX_TTL = 10_000;
+
+const isDir = p => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
 function roots() {
-  const out = [];
+  if (process.env.AGENTDESK_CLAUDE_TMP) return process.env.AGENTDESK_CLAUDE_TMP.split(':').filter(Boolean);
+  const out = new Set();
   for (const base of ['/tmp', tmpdir()]) {
     try {
-      for (const d of readdirSync(base)) if (d.startsWith('claude-')) out.push(join(base, d));
+      for (const d of readdirSync(base)) {
+        const p = join(base, d);
+        // /tmp 下也有 claude- 开头的普通文件，别当目录扫
+        if (d.startsWith('claude-') && isDir(p)) {
+          try { out.add(realpathSync(p)); } catch { out.add(p); }
+        }
+      }
     } catch { /* 目录不存在就跳过 */ }
   }
-  return out;
+  return [...out];
 }
 
-function findOutput(sessionId, bgId) {
-  const ck = `${sessionId}:${bgId}`;
-  const hit = pathCache.get(ck);
-  if (hit && existsSync(hit)) return hit;
-  for (const root of roots()) {
-    try {
-      for (const proj of readdirSync(root)) {
-        const p = join(root, proj, sessionId, 'tasks', `${bgId}.output`);
-        if (existsSync(p)) { pathCache.set(ck, p); return p; }
+// 会话 -> tasks 目录。整张表定期重建，而不是按会话缓存"找没找到"：
+// tasks/ 要等会话起第一个后台任务才建，以前把"没找到"永久缓存，
+// 服务启动之后新开的会话就再也检测不到后台任务了（服务跑 14 天，新会话全是 bg: {}）。
+let index = { at: -Infinity, map: new Map() };
+export function tasksDirOf(sessionId, now = Date.now()) {
+  if (now - index.at >= INDEX_TTL) {
+    const map = new Map();
+    for (const r of roots()) {
+      let projs = [];
+      try { projs = readdirSync(r); } catch { continue; }
+      for (const proj of projs) {
+        let sess = [];
+        try { sess = readdirSync(join(r, proj)); } catch { continue; }
+        for (const s of sess) {
+          const p = join(r, proj, s, 'tasks');
+          if (!map.has(s) && existsSync(p)) map.set(s, p);
+        }
       }
-    } catch { /* 权限或并发删除 */ }
+    }
+    index = { at: now, map };
   }
-  return null;
+  return index.map.get(sessionId) || null;
 }
 
-function readTail(path, n = 4096) {
-  const size = statSync(path).size;
+function readTail(path, size, n = 4096) {
   const len = Math.min(size, n);
   if (!len) return '';
   const buf = Buffer.alloc(len);
@@ -45,107 +63,107 @@ function readTail(path, n = 4096) {
   return buf.toString('utf8');
 }
 
-export function sweepBackground(tasks, now = Date.now()) {
-  let found = 0;
-  for (const t of tasks) {
-    for (const [bgId, info] of Object.entries(t.bg || {})) {
-      const p = findOutput(t.key, bgId);
-      if (!p) {
-        if (now - (info.since || 0) > BG_MAX_AGE) {
-          append({ agent: t.agent, key: t.key, kind: 'bg_done', bg_id: bgId, exit_code: 0 });
-          found++;
-        }
-        continue;
-      }
-      const m = readTail(p).match(EXIT_RE);
-      if (m) {
-        append({ agent: t.agent, key: t.key, kind: 'bg_done', bg_id: bgId, exit_code: Number(m[1]) });
-        pathCache.delete(`${t.key}:${bgId}`);
-        found++;
-      }
-    }
-  }
-  return found;
+// 退出码只看文件尾，文件没变就不用再读
+const exitCache = new Map();
+function exitCodeOf(path, st) {
+  const key = `${st.mtimeMs}:${st.size}`;
+  const hit = exitCache.get(path);
+  if (hit && hit.key === key) return hit.code;
+  const m = readTail(path, st.size).match(EXIT_RE);
+  const code = m ? Number(m[1]) : null;
+  if (exitCache.size > 2000) exitCache.clear();
+  exitCache.set(path, { key, code });
+  return code;
 }
 
-// 靠 PostToolUse 捕获后台任务是不够的：只有 Bash 的 run_in_background 会带
-// backgroundTaskId，子 agent 那类根本不经过它。但不管谁起的后台任务，
-// claude code 都会在 <tmp>/<项目>/<session>/tasks/ 下开一个 .output 文件，
-// 跑完往末尾写 [exited with code N]。直接扫这个目录，来源无关。
-const dirCache = new Map();
-
-function tasksDirOf(sessionId) {
-  const hit = dirCache.get(sessionId);
-  if (hit !== undefined && (hit === null || existsSync(hit))) return hit;
-  for (const root of roots()) {
-    try {
-      for (const proj of readdirSync(root)) {
-        const p = join(root, proj, sessionId, 'tasks');
-        if (existsSync(p)) { dirCache.set(sessionId, p); return p; }
-      }
-    } catch { /* 权限或并发删除 */ }
-  }
-  dirCache.set(sessionId, null);
-  return null;
-}
-
-// 返回 { taskId: { running, exit_code, since } }
-export function scanBackground(sessionId) {
-  const dir = tasksDirOf(sessionId);
+// 返回 { id: { running, exit_code, since } }
+export function scanBackground(sessionId, now = Date.now()) {
+  const dir = tasksDirOf(sessionId, now);
   if (!dir) return {};
-  const out = {};
   let names = [];
   try { names = readdirSync(dir); } catch { return {}; }
+  const out = {};
   for (const f of names) {
     if (!f.endsWith('.output')) continue;
     const full = join(dir, f);
     let st;
     try { st = statSync(full); } catch { continue; }
-    const m = readTail(full).match(EXIT_RE);
+    const code = exitCodeOf(full, st);
     // 有退出标记就是确定结束了。没有标记不等于还在跑 ——
     // 进程被杀、客户端崩溃、终端关掉，都不会留下标记，文件会永远停在那儿。
-    // 实测有 10 天没动的文件仍被当成"后台跑着"，19 个里 0 个是真的。
-    const running = m ? false : stillHeld(full, st);
-    out[f.replace(/\.output$/, '')] = {
-      running,
-      exit_code: m ? Number(m[1]) : null,
+    out[f.slice(0, -'.output'.length)] = {
+      running: code === null && stillHeld(full, st, now),
+      exit_code: code,
       since: st.mtimeMs,
     };
   }
   return out;
 }
 
-
 // 文件还被进程打开着，才算真的在跑。这是确定性判据，不是"多久没动"那种猜测。
-const heldCache = new Map();
-const HELD_TTL = 20_000;
+//
+// lsof 一次约 260ms。以前是逐个同步调用、结果只缓存 20 秒 —— 正好等于定时刷新的间隔，
+// 于是每 20 秒整个服务被卡住 3 秒多（实测 12 个文件 3160ms），期间事件、通知全部停摆。
+// 现在：异步批量一次查完，从不阻塞；查询结果回来之前按"还在跑"算 ——
+// 宁可让「完成」晚到几百毫秒，也不能先报完成再撤回。
+const heldCache = new Map();    // path -> { key, held, at }
+const HELD_TTL = 60_000;        // "有人持有"要定期复查；"没人持有"只要文件没变就永久有效
 const ZOMBIE_AFTER = 2 * 60 * 60 * 1000;   // 超过这么久没输出，不再当作在跑
+const queued = new Map();       // path -> 视图当时用的是什么值
+let checking = null;            // 正在跑的那次批量查询
+let onUpdate = () => {};
 
-function stillHeld(path, st) {
-  const idle = Date.now() - st.mtimeMs;
-  // lsof 一次约 200ms，几十个文件就是好几秒，不能每个都查。
-  // 两头用时间粗筛掉，只有中间地带才值得付这个代价：
+// 查询结果和之前的判断不一样时回调（server 用它触发一次刷新）
+export function onHeldChange(fn) { onUpdate = fn; }
+
+// 等手上的查询都跑完（启动时用：初始的提醒基线要建立在真实结果上，而不是"先按在跑算"的临时值）
+export async function heldSettled() {
+  while (checking) await checking;
+}
+
+function stillHeld(path, st, now) {
+  const idle = now - st.mtimeMs;
   if (idle < 5000) return true;              // 刚写过，必然在跑
   if (idle > ZOMBIE_AFTER) return false;     // 这么久没动，查了也是白查
+  // Windows 上没有免安装的可靠办法，退回时间判据
+  if (process.platform === 'win32') return idle < 10 * 60 * 1000;
 
-  const key = `${path}:${st.mtimeMs}:${st.size}`;
-  const hit = heldCache.get(key);
-  if (hit && Date.now() - hit.at < HELD_TTL) return hit.held;
+  const key = `${st.mtimeMs}:${st.size}`;
+  const hit = heldCache.get(path);
+  if (hit && hit.key === key && (!hit.held || now - hit.at < HELD_TTL)) return hit.held;
+  // 过期的"有人持有"沿用到新结果回来；没查过的、文件变过的，先按在跑算
+  const assumed = hit && hit.key === key ? hit.held : true;
+  queued.set(path, assumed);
+  if (!checking) checking = new Promise(r => setImmediate(r)).then(runChecks);
+  return assumed;
+}
 
-  let held = false;
-  if (process.platform === 'win32') {
-    // Windows 上没有免安装的可靠办法，退回时间判据
-    held = Date.now() - st.mtimeMs < 10 * 60 * 1000;
-  } else {
-    try {
-      execFileSync('lsof', ['-t', path], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 });
-      held = true;                       // lsof 有输出 = 有进程持有
-    } catch {
-      held = false;                      // 退出码非 0 = 没人持有它
+function lsof(paths) {
+  // 退出码 1 只表示"有的文件没人打开"，输出照样有效
+  return new Promise(resolve => execFile('lsof', ['-F', 'n', '--', ...paths], { encoding: 'utf8', timeout: 10_000 },
+    (_err, out) => resolve(new Set(String(out || '').split('\n').filter(l => l.startsWith('n')).map(l => l.slice(1))))));
+}
+
+async function runChecks() {
+  try {
+    while (queued.size) {
+      const batch = [...queued];
+      queued.clear();
+      const open = await lsof(batch.map(([p]) => p));
+      const now = Date.now();
+      let changed = false;
+      for (const [p, assumed] of batch) {
+        let st, real;
+        try { st = statSync(p); real = realpathSync(p); } catch { heldCache.delete(p); changed = true; continue; }
+        // lsof 报的是解析过符号链接的真实路径（/tmp → /private/tmp）
+        const held = open.has(p) || open.has(real);
+        if (held !== assumed) changed = true;
+        heldCache.set(p, { key: `${st.mtimeMs}:${st.size}`, held, at: now });
+      }
+      if (heldCache.size > 2000) heldCache.clear();
+      if (changed) onUpdate();
     }
+  } finally {
+    checking = null;
   }
-  // 缓存下来，否则每轮 snapshot 都要为每个文件付一次 lsof 的开销
-  heldCache.set(key, { held, at: Date.now() });
-  if (heldCache.size > 500) heldCache.clear();
-  return held;
 }

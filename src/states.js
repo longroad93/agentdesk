@@ -9,12 +9,17 @@ export const STATES = {
   idle:    { label: '停着',   icon: '⏸', mark: '■', color: '#94a3b8', notify: 'never',  sound: false },
 };
 
-// 只有这些算"占着你的注意力"。注意 done 也算 —— 前提是你还没看过它。
-// "跑完了但我不知道"和"还没跑完"，对使用者是同一件事。
+// 这几种状态会周期性重提醒。
 export const ATTENTION = ['waiting', 'stale', 'failed'];
 
+// 什么算"占着你的注意力"：
+//   等你 —— 一直算，直到它不等了（你去处理了）
+//   失败 / 失联 / 完成 —— 你还没看过才算。注意 done 也算：
+//   "跑完了但我不知道"和"还没跑完"，对使用者是同一件事。
+// 以前失败和失联不看已读，点了也消不掉，每 90 秒响一次直到 24 小时后退场。
 export function needsAttention(t) {
-  return ATTENTION.includes(t.state) || (t.state === 'done' && t.seen === false);
+  if (t.state === 'waiting') return true;
+  return (t.state === 'failed' || t.state === 'stale' || t.state === 'done') && t.seen === false;
 }
 
 // 面板首先要回答"现在有哪些 agent 在动"，其次才是"刚才发生了什么"。

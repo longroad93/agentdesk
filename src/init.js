@@ -1,35 +1,16 @@
 // 自动接入。任何需要用户手动编辑 JSON 的步骤都会劝退一半人，所以这里尽量做全。
 import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
 import { loadAdapters } from './adapters.js';
 import { loadConfig, saveConfig, ensureHome } from './store.js';
+import { expand, which, nodeBin } from './util.js';
 
 const SELF = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const expand = p => p.replace(/^~/, homedir()).replace(/\//g, process.platform === 'win32' ? '\\' : '/');
-
-// process.execPath 在 Homebrew 下是 .../Cellar/node/25.2.1/bin/node，版本号写死了。
-// node 一升级所有钩子就失效，所以优先取 PATH 里的软链。
-export function nodeBin() {
-  try {
-    const p = execSync(process.platform === 'win32' ? 'where node' : 'command -v node',
-      { encoding: 'utf8' }).trim().split(/\r?\n/)[0];
-    if (p && !p.includes('/Cellar/')) return p;
-  } catch {}
-  return process.execPath;
-}
 
 // 装了全局包就用短命令，否则退回 node + 绝对路径（开发/免安装场景）
 function cmdFor(sub) {
-  let onPath = false;
-  try {
-    execSync(process.platform === 'win32' ? 'where agentdesk' : 'command -v agentdesk',
-      { stdio: 'ignore' });
-    onPath = true;
-  } catch {}
-  return onPath
+  return which('agentdesk')
     ? `agentdesk ${sub}`
     : `"${nodeBin()}" "${join(SELF, 'bin', 'agentdesk.js')}" ${sub}`;
 }
@@ -77,11 +58,7 @@ export async function init({ dryRun = false } = {}) {
 function detect(def) {
   const { bin, config } = def.detect || {};
   if (config && existsSync(expand(config))) return true;
-  if (!bin) return false;
-  try {
-    execSync(process.platform === 'win32' ? `where ${bin}` : `command -v ${bin}`, { stdio: 'ignore' });
-    return true;
-  } catch { return false; }
+  return !!(bin && which(bin));
 }
 
 function installClaudeHooks(def, name, dryRun) {

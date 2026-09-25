@@ -13,7 +13,8 @@
   },
   "map": {
     "key": "$._session",
-    "title": "$._title"
+    "title": "$._title",
+    "alive": "$._file"
   },
   "rules": [
     {
@@ -40,6 +41,10 @@
       "map": {
         "summary": "$.payload.last_agent_message"
       }
+    },
+    {
+      "when": "$.payload.type == turn_aborted",
+      "kind": "stopped"
     },
     {
       "when": "$.type == session_meta",

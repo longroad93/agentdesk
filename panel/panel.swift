@@ -1,14 +1,15 @@
 // agentdesk 桌面悬浮面板。
 //
 // 为什么不用 Electron/Tauri：为了显示十几行文字装 100MB 运行时不值当。
-// 这个壳只有一件事 —— 把 localhost 的面板塞进一个置顶的 NSPanel。
-// 用系统自带的 swiftc 编译，不需要 Xcode，不需要任何系统权限，
-// 所以也不会碰 TCC 授权那套东西。
+// 这个壳只做两件事 —— 把 localhost 的面板塞进一个置顶的 NSPanel，以及替网页弹原生通知：
+// WKWebView 里的网页通知拿不到权限（一申请就是 denied），以前悬浮窗根本弹不出通知，
+// 只能靠另外开着的浏览器标签，而开机自启又不会打开浏览器。
 //
-// 编译：swiftc -O -o agentdesk-panel panel.swift -framework Cocoa -framework WebKit
+// 编译：swiftc -O -o AgentdeskPanel panel.swift -framework Cocoa -framework WebKit -framework UserNotifications
 
 import Cocoa
 import WebKit
+import UserNotifications
 
 let defaultURL = "http://localhost:4517/?compact=1"
 let frameKey = "agentdesk.panel.frame"
@@ -16,11 +17,18 @@ let collapsedKey = "agentdesk.panel.collapsed"
 let expandedHKey = "agentdesk.panel.expandedHeight"
 let collapsedH: CGFloat = 38          // 只留 header 那一条
 
-final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKScriptMessageHandler {
+// 把字符串安全地塞进一段 JS
+func jsString(_ s: String) -> String {
+    guard let d = try? JSONSerialization.data(withJSONObject: [s]), let a = String(data: d, encoding: .utf8) else { return "\"\"" }
+    return String(a.dropFirst().dropLast())
+}
+
+final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate {
     var panel: NSPanel!
     var web: WKWebView!
     var retryTimer: Timer?
     var expandedHeight: CGFloat = 480
+    var notifyStatus = "default"      // 网页那边用的说法：default / granted / denied
     let url: URL
 
     init(url: URL) {
@@ -58,7 +66,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
 
         let cfg = WKWebViewConfiguration()
         cfg.suppressesIncrementalRendering = false
-        // 网页改不了窗口尺寸，得让它把折叠意图发回来
+        // 网页改不了窗口尺寸、弹不了通知，得让它把意图发回来
         cfg.userContentController.add(self, name: "panel")
         web = WKWebView(frame: panel.contentLayoutRect, configuration: cfg)
         web.autoresizingMask = [.width, .height]
@@ -66,11 +74,82 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         panel.contentView?.addSubview(web)
 
         expandedHeight = UserDefaults.standard.object(forKey: expandedHKey) as? CGFloat ?? rect.height
-        load()
         panel.orderFrontRegardless()
         // 恢复上次的折叠状态，不然每次开都是展开的
         if UserDefaults.standard.bool(forKey: collapsedKey) { setCollapsed(true, animate: false) }
+
+        // 先问清楚通知授权状态再加载页面：网页要据此告诉服务端"我能不能负责弹通知"
+        UNUserNotificationCenter.current().delegate = self
+        refreshNotifyStatus { self.load() }
+        // 授权被拒之后只能去系统设置里改，改完不会有任何回调通知我们 —— 定期重查，变了就告诉网页
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let before = self.notifyStatus
+            self.refreshNotifyStatus {
+                if self.notifyStatus != before {
+                    self.web.evaluateJavaScript("window.__shellNotify && window.__shellNotify(\(jsString(self.notifyStatus)))", completionHandler: nil)
+                }
+            }
+        }
     }
+
+    // ---- 通知 ----
+
+    func refreshNotifyStatus(_ then: @escaping () -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { s in
+            DispatchQueue.main.async {
+                switch s.authorizationStatus {
+                case .authorized, .provisional: self.notifyStatus = "granted"
+                case .denied: self.notifyStatus = "denied"
+                default: self.notifyStatus = "default"
+                }
+                // 每次加载页面时注入，页面一开始就能读到
+                let uc = self.web.configuration.userContentController
+                uc.removeAllUserScripts()
+                uc.addUserScript(WKUserScript(source: "window.__shell = { notify: \(jsString(self.notifyStatus)) };",
+                                              injectionTime: .atDocumentStart, forMainFrameOnly: true))
+                then()
+            }
+        }
+    }
+
+    func requestNotify() {
+        // 被拒绝过的话系统不会再弹授权框，直接带你去设置页（带上 id 能直接定位到这个 app，不支持的系统会停在通知总页）
+        if notifyStatus == "denied" {
+            if let u = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.agentdesk.panel") { NSWorkspace.shared.open(u) }
+            return
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in
+            self.refreshNotifyStatus {
+                self.web.evaluateJavaScript("window.__shellNotify && window.__shellNotify(\(jsString(self.notifyStatus)))", completionHandler: nil)
+            }
+        }
+    }
+
+    func post(id: String, title: String, body: String, sound: Bool) {
+        let c = UNMutableNotificationContent()
+        c.title = title
+        c.body = body
+        if sound { c.sound = .default }
+        // 同一个任务用同一个 id：新的一条替换旧的，不会越堆越多
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: c, trigger: nil))
+    }
+
+    // 悬浮窗自己在前台时也照常显示
+    func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification,
+                                withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if #available(macOS 11.0, *) { done([.banner, .list, .sound]) } else { done([.alert, .sound]) }
+    }
+
+    // 点了通知：交给网页处理（切到那个 agent 的窗口、标成看过）
+    func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse,
+                                withCompletionHandler done: @escaping () -> Void) {
+        let id = r.notification.request.identifier
+        web.evaluateJavaScript("window.__onNotifyClick && window.__onNotifyClick(\(jsString(id)))", completionHandler: nil)
+        done()
+    }
+
+    // ---- 页面 ----
 
     func load() {
         web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
@@ -83,7 +162,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         scheduleRetry()
     }
     func webView(_ w: WKWebView, didFinish nav: WKNavigation!) {
-        retryTimer?.invalidate(); retryTimer = nil
+        if w.url?.scheme == "http" { retryTimer?.invalidate(); retryTimer = nil }
         let on = panel.frame.height <= collapsedH + 1
         w.evaluateJavaScript("window.__setCollapsed && window.__setCollapsed(\(on))", completionHandler: nil)
     }
@@ -108,8 +187,17 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
 
     func userContentController(_ uc: WKUserContentController, didReceive msg: WKScriptMessage) {
         guard let body = msg.body as? [String: Any], let action = body["action"] as? String else { return }
-        if action == "collapse" { setCollapsed(true) }
-        else if action == "expand" { setCollapsed(false) }
+        switch action {
+        case "collapse": setCollapsed(true)
+        case "expand": setCollapsed(false)
+        case "requestNotify": requestNotify()
+        case "notify":
+            post(id: body["id"] as? String ?? UUID().uuidString,
+                 title: body["title"] as? String ?? "agentdesk",
+                 body: body["body"] as? String ?? "",
+                 sound: body["sound"] as? Bool ?? false)
+        default: break
+        }
     }
 
     // 折叠时窗口向下收，顶边不动 —— 否则收起来位置会乱跳
@@ -154,7 +242,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
 
 let target = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : defaultURL
 guard let u = URL(string: target) else {
-    FileHandle.standardError.write("用法: agentdesk-panel [url]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("用法: AgentdeskPanel [url]\n".data(using: .utf8)!)
     exit(1)
 }
 

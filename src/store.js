@@ -1,25 +1,23 @@
 // 事件存储：只追加的 JSONL + 内存投影。没有数据库，没有 schema 迁移。
 import {
   appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync,
-  openSync, readSync, closeSync,
+  renameSync, rmdirSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { GROUP, WITHIN_ACTIVE } from './states.js';
 import { homedir } from 'node:os';
+import { GROUP, WITHIN_ACTIVE, needsAttention } from './states.js';
+import { describeTool, ASKS_USER } from './transcript.js';
 
 export const HOME = process.env.AGENTDESK_HOME || join(homedir(), '.agentdesk');
 export const EVENTS_FILE = join(HOME, 'events.jsonl');
+export const ROTATED_FILE = join(HOME, 'events.1.jsonl');
 export const CONFIG_FILE = join(HOME, 'config.json');
 
-const MAX_BYTES = 2 * 1024 * 1024;   // 超过就砍掉前半，日志不需要永久保留
+const MAX_BYTES = 2 * 1024 * 1024;   // 超过就轮转，只留上一份
 const DEFAULT_TIMEOUT = 15 * 60 * 1000;
-const IDLE_TURN_MS = 90 * 1000;   // transcript 停笔多久算这一轮停了
 const DEFAULT_RETENTION = 12 * 60 * 60 * 1000;   // 看过的完成任务保留多久
-// 没看过的、失败的、失联的保留多久。以前是"永远"——前提是已读能自动发生，
-// 但会话级已读一直做不成，只有在面板上点或者回那个会话说话才算看过。
-// 你在 agent 窗口里早看过了却没点面板，它就永远是未读、永远不退场，
-// 实测 35 条里 28 条是超过 24 小时的积压。24 小时还没顾上的，
-// 要么不重要，要么早在别处处理过了，继续提醒只是噪音。
+// 没看过的、失败的、失联的保留多久。已读能准确判定之前，这里是个止血的上限：
+// 你在 agent 窗口里早看过了却没点面板，它就永远是未读、永远不退场。
 const ATTENTION_RETENTION = 24 * 60 * 60 * 1000;
 // "等你"要等多久才认为那个窗口其实已经关了。必须远大于常规超时：
 // agent 在等你的时候本来就停着不动，拿常规超时判它会把"需要你处理"
@@ -50,21 +48,39 @@ export function append(event) {
   }
 }
 
-function rotateIfNeeded() {
+// 轮转用改名，不用"读出来砍掉前半再整份写回"：钩子是一个个独立进程在并发追加，
+// 读和写之间别的进程追加的那几行会被覆盖掉 —— 丢的可能正好是一条"等你"。
+// 改名是原子的，之后的追加按路径打开，自然落到新文件里。
+export function rotateIfNeeded(maxBytes = MAX_BYTES) {
   try {
-    if (statSync(EVENTS_FILE).size <= MAX_BYTES) return;
-    const lines = readFileSync(EVENTS_FILE, 'utf8').split('\n').filter(Boolean);
-    writeFileSync(EVENTS_FILE, lines.slice(Math.floor(lines.length / 2)).join('\n') + '\n');
-  } catch { /* 轮转失败不影响写入 */ }
+    if (statSync(EVENTS_FILE).size <= maxBytes) return false;
+  } catch { return false; }
+  const lock = EVENTS_FILE + '.rotating';
+  try {
+    mkdirSync(lock);                       // mkdir 是原子的，当锁用
+  } catch {
+    // 别的进程正在轮转；锁残留太久（进程崩了）就清掉，下次再来
+    try { if (Date.now() - statSync(lock).mtimeMs > 10_000) rmdirSync(lock); } catch {}
+    return false;
+  }
+  try {
+    if (statSync(EVENTS_FILE).size > maxBytes) { renameSync(EVENTS_FILE, ROTATED_FILE); return true; }
+    return false;
+  } catch { return false; } finally {
+    try { rmdirSync(lock); } catch {}
+  }
 }
 
 export function loadEvents() {
-  if (!existsSync(EVENTS_FILE)) return [];
-  return readFileSync(EVENTS_FILE, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map(l => { try { return JSON.parse(l); } catch { return null; } })
-    .filter(Boolean);
+  const out = [];
+  for (const f of [ROTATED_FILE, EVENTS_FILE]) {
+    if (!existsSync(f)) continue;
+    for (const l of readFileSync(f, 'utf8').split('\n')) {
+      if (!l) continue;
+      try { out.push(JSON.parse(l)); } catch { /* 写到一半的行 */ }
+    }
+  }
+  return out;
 }
 
 export function loadConfig() {
@@ -82,36 +98,59 @@ export function saveConfig(cfg) {
   writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
-// 事件 kind -> 任务 state。只有五个状态，多了你也不会看。
+// 事件 kind -> 任务 state
 const TRANSITIONS = {
   start:     'running',
   progress:  'running',
   waiting:   'waiting',
   done:      'done',
   failed:    'failed',
+  stopped:   'idle',    // 被你中断了。你自己停的，你知道，不算未读
   heartbeat: null,      // 只更新 last_seen，不改状态
   seen:      null,      // 只翻已读标记
-  bg_start:  null,      // 后台任务另算，见下面特判
-  bg_done:   null,
+  read:      null,      // app 自己记的已读状态（WorkBuddy 的 unread 列）
   closed:    null,      // 特判见下
 };
 
-export function project(events, { now = Date.now(), timeouts = {}, retention, skipRetention = false } = {}) {
+// 只有带状态的事件能建任务。
+//   closed —— claude code 一重启，所有历史会话同时 SessionEnd，面板会瞬间多出十几条"已完成"
+//   seen / read / heartbeat —— 日志轮转后会留下只剩这类事件的孤儿，建出来就是一条假的"失联"
+const CREATES = new Set(['start', 'progress', 'waiting', 'done', 'failed']);
+// last_seen 是"agent 最后一次真实活动"，排序和退场都靠它。
+// 你点"已读"不是 agent 的活动；客户端重启时几十个会话同时 SessionEnd 也不是。
+// 这两种事件以前都在刷 last_seen，结果点一次"全部已读"，37 条几天前的任务
+// 全跳到了列表最前面，显示"7 分钟前"。
+const NOT_ACTIVITY = new Set(['seen', 'closed', 'read']);
+
+// 投影要看的文件系统信号都从 io 进来，测试时换成假的。
+//   transcript(path)  → transcript.js 的 transcriptInfo
+//   mtime(path)       → 文件修改时间，没有返回 0
+//   subagentsMtime(p) → 子 agent transcript 的最新修改时间
+//   background(task)  → { bg: {id: info}, busy: bool }：真后台任务 / 有前台工具正在执行
+//   focusedAt(task)   → app 记录的"你最后一次点开这个会话"的时间
+const NO_IO = {
+  transcript: () => null, mtime: () => 0, subagentsMtime: () => 0,
+  background: () => null, focusedAt: () => 0,
+};
+
+export function project(events, {
+  now = Date.now(), timeouts = {}, retention, attentionRetention, skipRetention = false, io = {},
+} = {}) {
+  io = { ...NO_IO, ...io };
   const tasks = new Map();
 
   for (const ev of events) {
     if (!ev.agent || !ev.key) continue;
+    // 旧版本写的后台事件。后台状态现在由扫目录现算，这些事件既不建任务也不算活动
+    if (ev.kind === 'bg_start' || ev.kind === 'bg_done') continue;
     const id = `${ev.agent}:${ev.key}`;
     let t = tasks.get(id);
     if (!t) {
-      // SessionEnd 不能凭空建任务。claude code 一重启，所有历史会话同时 SessionEnd，
-      // 否则面板瞬间多出十几条你根本没在跑的"已完成"。
-      // done/waiting 可以建 —— codex 那类只有回合结束事件、没有开始事件。
-      if (ev.kind === 'closed') continue;
+      if (!CREATES.has(ev.kind)) continue;
       t = {
         id, agent: ev.agent, key: ev.key,
         title: '', prompt: '', cwd: ev.cwd || '', summary: '', bg: {}, seen: true,
-        state: 'running', started_at: ev.ts, last_seen: ev.ts,
+        state: 'running', started_at: ev.ts, last_seen: ev.ts, turn_at: ev.ts,
         confidence: ev.confidence || 'exact',
       };
       tasks.set(id, t);
@@ -120,35 +159,39 @@ export function project(events, { now = Date.now(), timeouts = {}, retention, sk
     if (ev.title) t.title = ev.title;
     if (ev.prompt) t.prompt = ev.prompt;
     if (ev.transcript) t.transcript = ev.transcript;
+    if (ev.alive) t.alive = ev.alive;
+    if (ev.entrypoint) t.entrypoint = ev.entrypoint;
     if (ev.cwd) t.cwd = ev.cwd;
     if (ev.summary) t.summary = ev.summary;
     // 摘要是绑在状态上的：waiting 时那句"需要授权"在任务完成后就是误导，得清掉
     else if (ev.kind === 'done' || ev.kind === 'failed' || ev.kind === 'start') t.summary = '';
     if (ev.confidence) t.confidence = ev.confidence;
-    // last_seen 是"agent 最后一次真实活动"，排序和退场都靠它。
-    // 你点"已读"不是 agent 的活动；客户端重启时几十个会话同时 SessionEnd 也不是。
-    // 这两种事件之前都在刷 last_seen，结果点一次"全部已读"，37 条几天前的任务
-    // 全跳到了列表最前面，显示"7 分钟前"。
-    if (ev.kind !== 'seen' && ev.kind !== 'closed') t.last_seen = ev.ts;
+    if (!NOT_ACTIVITY.has(ev.kind)) t.last_seen = ev.ts;
 
-    if (ev.kind === 'seen') { t.seen = true; continue; }
-    // 回合结束 = 有东西等你看。用户重新在这个会话里说话，说明他回来了，自动算已读。
-    // 但纠正型事件（auto）不是"又有新东西"，它只是把状态推回正轨；
-    // 而且既然坏状态被撤销了，未读也该跟着撤，否则面板上会留一条谁都不会去点的"完成"。
-    if (ev.kind === 'done' || ev.kind === 'failed') {
-      if (!ev.auto) t.seen = false;
-      else if (t.state === 'failed' || t.state === 'stale') t.seen = true;
+    if (ev.kind === 'seen') { t.seen = true; t.seen_at = ev.ts; continue; }
+    if (ev.kind === 'read') {
+      if (ev.value) { t.seen = true; t.seen_at = ev.ts; }
+      else if (t.state === 'done' || t.state === 'failed') t.seen = false;
+      continue;
     }
-    if (ev.kind === 'start') t.seen = true;
-
-    // 后台任务状态不走事件，由服务端扫 tasks/ 目录现算（见 server.js 的 snapshot）。
-    // 事件是一次性的：bg_start 没等到配对的 bg_done，状态就被永久钉在"后台跑着"。
-    if (ev.kind === 'bg_start' || ev.kind === 'bg_done') continue;
-
+    // 回合结束 = 有东西等你看。但纠正型事件（auto）不是"又有新东西"，它只是把状态推回正轨；
+    // 既然坏状态被撤销了，未读也该跟着撤，否则面板上会留一条谁都不会去点的"完成"。
+    if (ev.kind === 'done' || ev.kind === 'failed') {
+      t.done_at = ev.ts;
+      // claude -p 这类无人值守的自动任务，没有人会去 UI 里看它：完成不算未读，失败照样提醒
+      if (!ev.auto) t.seen = ev.kind === 'done' && t.entrypoint === 'sdk-cli';
+      else if (t.state === 'failed') t.seen = true;
+    }
+    // 你重新在这个会话里说话，说明你回来了，自动算已读。
+    // 后台任务完成通知这类注入的"输入"会开新一轮，但不代表你回来了。
+    if (ev.kind === 'start') {
+      t.turn_at = ev.ts;
+      if (!ev.machine) t.seen = true;
+    }
     if (ev.kind === 'waiting') t.waiting_since = ev.ts;
 
     if (ev.kind === 'closed') {
-      // 会话关掉了：跑到一半算失败，已完成的保持完成
+      // 会话关掉了：跑到一半的算结束，已完成的保持完成
       if (t.state === 'running' || t.state === 'waiting') t.state = 'done';
     } else {
       const next = TRANSITIONS[ev.kind];
@@ -156,149 +199,117 @@ export function project(events, { now = Date.now(), timeouts = {}, retention, sk
     }
   }
 
-  // 标题兜底单独一轮，不能和下面的超时判定混在一个循环里 ——
-  // 那个循环里有 continue，之前兜底写在它后面，transcript 活跃的任务全被跳过，
-  // 面板上就出现了标题为空、只剩副行的条目。
-  for (const t of tasks.values()) {
-    if (t.title) continue;
-    // 会话标题是 agent 后来才生成的。钩子触发那一刻读不到很正常，
-    // 所以这里每次投影都再试一次（带缓存），标题一出现面板就跟上。
-    if (t.transcript) {
-      const title = readSessionTitle(t.transcript);
-      if (title) { t.title = title; continue; }
+  const list = [...tasks.values()];
+  for (const t of list) derive(t, io, now, timeouts);
+  return (skipRetention ? list : applyRetention(list, { now, retention, attentionRetention })).sort(byUrgency);
+}
+
+// 事件只记录"发生过什么"，此刻的状态还要结合文件系统现看。关键是每次投影现算、不写事件 ——
+// 用事件表达持续观察出来的状态，只会把状态钉死。
+function derive(t, io, now, timeouts) {
+  const info = t.transcript ? io.transcript(t.transcript) : null;
+  // 属于当前这一轮的信号才算（一秒宽限：钩子和 transcript 写入的先后不固定）
+  const inTurn = at => at && at >= (t.turn_at || 0) - 1000;
+  const tool = info?.tool && inTurn(info.tool.at) ? info.tool : null;
+
+  // 会话标题是 agent 后来才生成的，钩子触发那一刻读不到很正常，每次投影都再试一次
+  if (!t.title) {
+    t.title = info?.title
+      || (t.prompt ? titleFromPrompt(t.prompt)
+      : t.cwd ? (t.cwd.split(/[/\\]/).filter(Boolean).pop() || t.cwd)
+      : t.key.slice(0, 12));
+  }
+
+  if (info) {
+    // 在问你问题 / 等你批准计划：工具一挂起就是在等你，不需要等 Notification 钩子
+    if (tool && ASKS_USER.has(tool.name) && (t.state === 'running' || t.state === 'waiting')) {
+      if (t.state !== 'waiting' || !t.waiting_since || t.waiting_since < tool.at - 5000) t.waiting_since = tool.at;
+      t.state = 'waiting';
     }
-    t.title = t.prompt ? titleFromPrompt(t.prompt)
-            : t.cwd ? (t.cwd.split(/[/\\]/).filter(Boolean).pop() || t.cwd)
-            : t.key.slice(0, 12);
+    // "等你确认"是瞬时事件：你批准之后 agent 继续干活，不会再触发任何钩子。
+    // transcript 在那条 waiting 之后还在写，就说明早就不等了（宽限 15 秒：钩子触发的当下本来就会写一笔）
+    if (t.state === 'waiting' && !(tool && ASKS_USER.has(tool.name))
+        && t.waiting_since && info.mtime > t.waiting_since + 15_000) t.state = 'running';
+    // API 报错（过载、断线、登录过期）会直接结束这一轮，没有任何钩子告诉你
+    if (info.apiError && inTurn(info.apiError.at) && ['running', 'waiting', 'done'].includes(t.state)) {
+      t.state = 'failed';
+      t.summary = info.apiError.text;
+      t.done_at = Math.max(t.done_at || 0, info.apiError.at);
+      t.seen = (t.seen_at || 0) > info.apiError.at;
+    }
+    // 中断没有钩子，但 transcript 里会写一条 [Request interrupted by user]。
+    // 以前靠"90 秒没写就算停了"，长命令、长回复全被误判
+    if (t.state === 'running' && inTurn(info.interruptedAt) && !tool && !info.generating) t.state = 'idle';
   }
 
-  // "等你确认"是个瞬时事件，不是持续状态。你批准之后 agent 继续干活，
-  // 不会再触发任何钩子（要等到 Stop），状态就永远卡在"等你"上。
-  // transcript 在那条 waiting 之后还在写，就说明早就不等了。
-  for (const t of tasks.values()) {
-    if (t.state !== 'waiting' || !t.transcript || !t.waiting_since) continue;
-    try {
-      const m = statSync(t.transcript).mtimeMs;
-      // 宽限 15 秒：钩子触发的当下 transcript 本来就会写一笔，那不算"恢复"
-      if (m > t.waiting_since + 15_000) t.state = 'running';
-    } catch { /* transcript 没了就维持原状 */ }
-  }
+  // 后台任务不看事件看目录，而且得和 transcript 对上：前台命令跑的时候也会开 .output
+  const bgInfo = io.background(t);
+  if (bgInfo) { t.bg = bgInfo.bg || {}; t.busy = !!bgInfo.busy; }
+  if (Object.keys(t.bg).length && (t.state === 'done' || t.state === 'idle')) t.state = 'bgrun';
+  // 批准之后命令开始执行，但命令跑完之前 transcript 一个字都不写 —— 有前台工具正在执行就说明不等了
+  if (t.state === 'waiting' && t.busy && !(tool && ASKS_USER.has(tool.name))) t.state = 'running';
 
-  // 中断没有任何钩子。claude 干活时持续写 transcript，停笔就说明这轮停了。
-  // 关键是这里"每次投影现算"而不是写一条 done 事件 —— 会话一旦恢复写入，
-  // 状态自己就回到运行中。用事件表达持续观察出来的状态，只会把状态钉死。
-  for (const t of tasks.values()) {
-    if (t.state !== 'running' || !t.transcript) continue;
-    try {
-      if (now - statSync(t.transcript).mtimeMs > IDLE_TURN_MS) t.state = 'idle';
-    } catch { /* transcript 没了就维持原状 */ }
-  }
-
-  // 关键的一步：没有任何 agent 会主动告诉你"我死了"，只能靠心跳超时兜住
-  for (const t of tasks.values()) {
-    if (t.state !== 'running' && t.state !== 'waiting') continue;
+  // 没有任何 agent 会主动告诉你"我死了"，只能靠超时兜住。
+  // 长时间没有新事件不等于失联：transcript、会话流文件、子 agent 还在写就说明活着
+  if ((t.state === 'running' || t.state === 'waiting') && !t.busy) {
     const base = timeouts[t.agent] ?? timeouts.default ?? DEFAULT_TIMEOUT;
     // "等你"用一把长得多的尺子量，理由见 WAITING_STALE_MS
     const limit = t.state === 'waiting' ? Math.max(base * 8, WAITING_STALE_MS) : base;
-    // 长时间没有新事件不等于失联：agent 可能正在跑一个很久的工具调用。
-    // transcript 还在写就说明它活着，这比事件时间戳可靠。
-    if (t.transcript) {
-      try {
-        if (now - statSync(t.transcript).mtimeMs <= limit) continue;
-      } catch { /* transcript 没了，按事件时间判 */ }
-    }
-    if (now - t.last_seen > limit) {
+    const live = Math.max(t.last_seen, io.mtime(t.transcript), io.mtime(t.alive), io.subagentsMtime(t.transcript));
+    if (now - live > limit) {
       t.stale_from = t.state;
       t.state = 'stale';
+      t.live_at = live;
+      t.stale_at = live + limit;
+      // 失联是现算出来的状态，"看过"要晚于它变成失联的那一刻才算
+      t.seen = (t.seen_at || 0) > t.stale_at;
     }
   }
 
-  const out = [...tasks.values()];
-  // 退场判定要放在后台任务算完之后（那是 server 的 snapshot 干的），
-  // 否则一个 12 小时前完成、已读、但后台还在跑的任务会被提前踢出面板。
-  return (skipRetention ? out : applyRetention(out, { now, retention })).sort(byUrgency);
+  // 已读以 app 自己的记录为准：完成之后你在 app 里点开过这个会话，就是看过了
+  if (t.seen === false && ['done', 'failed', 'stale'].includes(t.state)) {
+    const since = t.state === 'stale' ? t.stale_at : t.done_at;
+    const f = io.focusedAt(t);
+    if (since && f > since) { t.seen = true; t.seen_via = 'app'; }
+  }
+
+  // 给人看的那一行：在跑的写正在干什么，等你的写要你干什么，完成的写它最后说了什么
+  if (t.state === 'running') t.activity = tool ? describeTool(tool, 'run') : info?.generating ? '思考中' : '';
+  if (t.state === 'waiting') {
+    if (tool) t.summary = describeTool(tool, 'ask');
+    else t.summary = localizeNotice(t.summary);
+  }
+  if (t.state === 'done' && !t.summary && info?.lastReply && inTurn(info.replyAt)) t.summary = info.lastReply;
+  if (t.state === 'done') t.asks = /[?？]\s*$/.test(t.summary || '');
+  t.needs = needsAttention(t);
+}
+
+// Claude 的 Notification 消息是英文的，而且"permission to use AskUserQuestion"其实是在问你问题
+function localizeNotice(s) {
+  const m = String(s || '').match(/needs your permission to use (.+)$/i);
+  if (m) return m[1].trim() === 'AskUserQuestion' ? '在问你问题' : `要授权：${m[1].trim()}`;
+  if (/waiting for your input/i.test(s || '')) return '等你输入';
+  return s;
 }
 
 // 面板会无限增长。已经看过的完成任务过一段时间就该退场；
-// 但没看过的、还需要你处理的、后台还在跑的，无论多老都留着 ——
-// 那正是这个面板存在的意义。
+// 没看过的、还需要你处理的、后台还在跑的留得久一点 —— 那正是这个面板存在的意义。
 export function applyRetention(tasks, { now = Date.now(), retention, attentionRetention } = {}) {
   const keepMs = retention ?? DEFAULT_RETENTION;
   const attnMs = attentionRetention ?? ATTENTION_RETENTION;
   return tasks.filter(t => {
     // 真在跑的无论多久都留着——那是"现在"，不是历史
     if (t.state === 'running' || t.state === 'bgrun' || Object.keys(t.bg || {}).length) return true;
-    const age = now - t.last_seen;
-    // 需要你注意的留得久一点，但也有头，见 ATTENTION_RETENTION
-    const needs = t.state === 'waiting' || t.state === 'stale' || t.state === 'failed'
-               || (t.state === 'done' && t.seen === false);
-    return age <= (needs ? attnMs : keepMs);
+    return now - t.last_seen <= (needsAttention(t) ? attnMs : keepMs);
   });
-}
-
-// 从 transcript 里捞会话标题。
-//
-// 两头都读，不能只读末尾：有的会话每轮都重写标题（最新的在末尾），
-// 有的只在开头写一次，中间全是 attachment，末尾 64KB 根本够不着。
-// 先看末尾（拿到的是最新的），没有再看开头。
-const TITLE_WINDOW = 128 * 1024;
-const titleCache = new Map();
-
-export function readSessionTitle(path) {
-  let st;
-  try { st = statSync(path); } catch { return undefined; }
-  const ck = `${path}:${st.mtimeMs}:${st.size}`;
-  if (titleCache.has(ck)) return titleCache.get(ck);
-
-  let found;
-  try {
-    const fd = openSync(path, 'r');
-    try {
-      const tail = readChunk(fd, Math.max(0, st.size - TITLE_WINDOW), Math.min(st.size, TITLE_WINDOW));
-      found = pickTitle(tail);
-      if (!found && st.size > TITLE_WINDOW) found = pickTitle(readChunk(fd, 0, TITLE_WINDOW));
-    } finally { closeSync(fd); }
-  } catch (err) {
-    // 文件读不到是正常的（会话被删、权限变了），静默退回兜底标题。
-    // 但 ReferenceError/TypeError 是代码写错了 —— 这里曾经漏了 openSync 的导入，
-    // 被这个 catch 原样吞掉，标题静默失效了很久还查不出原因。别再让它藏起来。
-    if (err instanceof ReferenceError || err instanceof TypeError) {
-      process.stderr.write(`[agentdesk] readSessionTitle 代码错误: ${err.message}\n`);
-    }
-  }
-
-  if (titleCache.size > 300) titleCache.clear();
-  titleCache.set(ck, found);
-  return found;
-}
-
-function readChunk(fd, pos, len) {
-  if (len <= 0) return '';
-  const buf = Buffer.alloc(len);
-  readSync(fd, buf, 0, len, pos);
-  return buf.toString('utf8');
-}
-
-// customTitle 是你自己改的，优先于 AI 生成的
-function pickTitle(text) {
-  for (const key of ['customTitle', 'aiTitle']) {
-    const hits = [...text.matchAll(new RegExp('"' + key + '":"((?:[^"\\\\]|\\\\.)*)"', 'g'))];
-    if (hits.length) {
-      const raw = hits[hits.length - 1][1];
-      try { return JSON.parse('"' + raw + '"'); } catch { return raw; }
-    }
-  }
-  return undefined;
 }
 
 // 没有会话标题时拿第一句话凑。claude code 的 prompt 常以 @文件引用 开头，
 // 那种当标题就是一串路径，剥掉再取。
 function titleFromPrompt(p) {
   let s = String(p).trim();
-  // @"path with spaces" 或 @path/to/file，可能连续好几个
   s = s.replace(/^(@"[^"]*"\s*|@\S+\s*)+/, '').trim();
   if (!s) s = String(p).trim();
-  // 到第一个句末标点为止，多半就是一句完整的话
   const m = s.match(/^[^。！？!?\n]{4,60}/);
   return (m ? m[0] : s.slice(0, 40)).trim();
 }

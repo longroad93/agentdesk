@@ -4,11 +4,16 @@
   "source": "sqlite",
   "confidence": "exact",
   "db": "~/.workbuddy/workbuddy.db",
-  "query": "SELECT id, cwd, COALESCE(NULLIF(custom_title,''), title, '') AS title, status, COALESCE(is_background_automation, 0) AS bg, CASE WHEN COALESCE(is_background_automation, 0) = 1 AND status = 'completed' THEN 1 ELSE 0 END AS bg_recovered FROM sessions WHERE last_activity_at > ? AND deleted_at IS NULL AND NOT (COALESCE(is_background_automation, 0) = 1 AND status NOT IN ('error','completed')) ORDER BY last_activity_at DESC LIMIT 60",
+  "query": "SELECT id, cwd, COALESCE(NULLIF(custom_title,''), title, '') AS title, status, COALESCE(is_background_automation, 0) AS bg, COALESCE(unread, 0) AS unread, last_activity_at, CASE WHEN COALESCE(is_background_automation, 0) = 1 AND status = 'completed' THEN 1 ELSE 0 END AS bg_recovered FROM sessions WHERE last_activity_at > ? AND deleted_at IS NULL AND NOT (COALESCE(is_background_automation, 0) = 1 AND status NOT IN ('error','completed')) ORDER BY last_activity_at DESC LIMIT 60",
   "map": {
     "key": "$.id",
     "cwd": "$.cwd",
     "title": "$.title"
+  },
+  "read": "$.unread == 0",
+  "heartbeat": {
+    "field": "$.last_activity_at",
+    "every": 60000
   },
   "rules": [
     {

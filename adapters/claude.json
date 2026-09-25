@@ -22,6 +22,9 @@
     "title": "@title:$.transcript_path",
     "transcript": "$.transcript_path"
   },
+  "env": {
+    "entrypoint": "CLAUDE_CODE_ENTRYPOINT"
+  },
   "rules": [
     {
       "when": "$.hook_event_name == UserPromptSubmit",
@@ -41,10 +44,6 @@
     {
       "when": "$.hook_event_name == Stop",
       "kind": "done"
-    },
-    {
-      "when": "$.hook_event_name == SubagentStop",
-      "kind": "heartbeat"
     },
     {
       "when": "$.hook_event_name == SessionEnd",
