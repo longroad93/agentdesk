@@ -16,6 +16,7 @@ const io = (o = {}) => ({
   subagentsMtime: () => o.sub ?? 0,
   background: t => o.bg?.[t.key] ?? null,
   focusedAt: t => o.focus?.[t.key] ?? 0,
+  appUnread: t => o.unread?.[t.key] ?? null,
 });
 const one = (events, opts = {}) => {
   const out = project(events, { now: NOW, skipRetention: true, ...opts });
@@ -75,6 +76,19 @@ test('Claude 桌面版：完成之后点开过这个会话 = 已读；完成之�
   assert.equal(after.seen, true);
   assert.equal(after.seen_via, 'app');
   assert.equal(one(evs, { io: io({ focus: { s: NOW - 7 * MIN } }) }).needs, true);
+});
+
+test('Codex 桌面版：不在它的未读列表里、且列表是完成之后落的盘 = 已读', () => {
+  const evs = [ev('codex', 'c', 'start', NOW - 10 * MIN), ev('codex', 'c', 'done', NOW - 5 * MIN)];
+  const read = one(evs, { io: io({ unread: { c: { unread: false, savedAt: NOW - 1 * MIN } } }) });
+  assert.equal(read.seen, true);
+  assert.equal(read.seen_via, 'app');
+  // app 还在未读列表里留着它
+  assert.equal(one(evs, { io: io({ unread: { c: { unread: true, savedAt: NOW - 1 * MIN } } }) }).needs, true);
+  // 刚完成、app 还没来得及写：列表里没有它不代表看过
+  assert.equal(one(evs, { io: io({ unread: { c: { unread: false, savedAt: NOW - 5 * MIN + 1000 } } }) }).needs, true);
+  // 读不到信号：退回原来的判定
+  assert.equal(one(evs, { io: io() }).needs, true);
 });
 
 test('失联：超时没有任何活动；看过之后不再算需要注意', () => {

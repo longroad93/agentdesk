@@ -216,10 +216,13 @@ switch (cmd) {
   // 和面板走同一条管道（view.js），看到的应该一模一样
   case 'status': {
     const { buildView, createIO } = await import('../src/view.js');
-    const { createDesktopFocus } = await import('../src/readstate.js');
+    const { createDesktopFocus, createCodexReadState, claudeUserDataSessions, describeClaudeDirs } = await import('../src/readstate.js');
+    const { loadEvents } = await import('../src/store.js');
     const cfg = loadConfig();
     const desktop = createDesktopFocus();
-    const tasks = buildView({ cfg, adapters: loadAdapters(), io: createIO({ desktop }) });
+    desktop.addDirs(claudeUserDataSessions(loadEvents()));
+    const codex = createCodexReadState();
+    const tasks = buildView({ cfg, adapters: loadAdapters(), io: createIO({ desktop, codex }) });
     const now = Date.now();
     console.log('');
     if (!tasks.length) console.log('  没有需要显示的任务（看过的任务到点会自己退场）。还没接入过的话：agentdesk init');
@@ -233,7 +236,8 @@ switch (cmd) {
     if (tasks.length) console.log(`\n  ${need ? `\x1b[33m${need} 个需要你处理\x1b[0m` : '都不用管'}`);
     // 已读判定靠的这几个信号，哪个失效了要看得见，别让它悄悄坏掉
     const h = await health(cfg.port || 4517);
-    console.log(`\n  \x1b[2m已读信号：Claude 桌面版 ${desktop.count ? `${desktop.count} 个会话` : '读不到（会退回"回话 / 点击才算已读"）'}` +
+    console.log(`\n  \x1b[2m已读信号：Claude 桌面版 ${describeClaudeDirs(desktop)}` +
+      ` · Codex 桌面版 ${codex.known ? '未读列表可用' : '读不到'}` +
       ` · 前台检测 ${process.platform === 'darwin' ? 'lsappinfo' : process.platform === 'win32' ? 'PowerShell' : '不支持'}` +
       ` · 服务 ${h?.old ? '\x1b[33m在跑，但还是旧版本，需要重启\x1b[2m' : h ? (h.notifier ? `在跑，通知由${h.notifier.cap === 'native' ? '悬浮窗' : '浏览器'}负责` : '在跑，\x1b[33m但没有能弹通知的页面\x1b[2m') : '没在跑'}\x1b[0m\n`);
     break;

@@ -131,7 +131,11 @@ tab title and the header ("3 finished, unseen").
 permissions required:
 
 - **Claude desktop app** — it records when you last focused each session. If you opened that
-  session after it finished, you've seen it
+  session after it finished, you've seen it. Works whether you sign in with a Claude account or an
+  API key / third-party provider (those keep their data in a separate `Claude-3p/` dir, also read;
+  so is `CLAUDE_USER_DATA_DIR` if you set one). Switching sign-in mode needs no restart
+- **Codex desktop app (ChatGPT.app)** — mirrors its own unread list (`electron-thread-read-state-v1`
+  in `~/.codex/.codex-global-state.json`). Codex CLI sessions never appear there, so they don't use it
 - **It was on your screen when it finished** — Claude in front, that session focused, for 3+
   seconds: counts as seen, and no notification fires
 - **WorkBuddy** — mirrors its own unread flag (`sessions.unread`)

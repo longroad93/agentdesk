@@ -152,8 +152,10 @@ cat ~/.agentdesk/events.jsonl | tail -3
 同上。另外这两个是靠读它们自己的数据文件/数据库，只有用户实际用过才有数据。
 
 **看过了还显示未读 / 已读不准**
-跑 `agentdesk status`，最后一行是已读信号：Claude 桌面版的会话记录读不到时，已读会退回"回话 / 点击才算"。
-终端里的 Claude CLI、Codex 没有 app 侧的记录，只能靠回话、点击，或者 app 在前台且它只剩一条未读。
+跑 `agentdesk status`，最后一行是已读信号：Claude 桌面版的会话记录（`Claude/` 和第三方模型用的 `Claude-3p/` 都读，
+括号里写着实际读到的是哪个目录；用户切换过登录方式、这里却只有 `Claude` 的话，说明读的是老目录）、
+Codex 桌面版自己的未读列表（`~/.codex/.codex-global-state.json`）。读不到时，已读会退回"回话 / 点击才算"。
+终端里的 Claude CLI、Codex CLI 没有 app 侧的记录，只能靠回话、点击，或者 app 在前台且它只剩一条未读。
 
 **通知没弹**
 `agentdesk test` 会直接说现在由谁负责弹通知、为什么没有。不要自己猜。

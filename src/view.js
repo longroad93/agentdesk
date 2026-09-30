@@ -6,8 +6,9 @@ import { loadEvents, project } from './store.js';
 import { transcriptInfo, subagentsMtime, backgroundIds } from './transcript.js';
 import { scanBackground } from './bgwatch.js';
 import { adapterFor } from './adapters.js';
+import { isCodexDesktopThread, isClaudeDesktop } from './readstate.js';
 
-export function createIO({ desktop = null } = {}) {
+export function createIO({ desktop = null, codex = null } = {}) {
   return {
     transcript: transcriptInfo,
     mtime: p => {
@@ -31,6 +32,12 @@ export function createIO({ desktop = null } = {}) {
       return { bg, busy };
     },
     focusedAt: t => (desktop && t.agent === 'claude' ? desktop.focusedAt(t.key) : 0),
+    // Codex 桌面版自己的未读列表。t.alive 是 adapter 映射进来的 rollout 文件路径
+    appUnread(t) {
+      if (!codex || t.agent !== 'codex' || !isCodexDesktopThread(t.alive)) return null;
+      const unread = codex.isUnread(t.key);
+      return unread === null ? null : { unread, savedAt: codex.savedAt };
+    },
   };
 }
 
@@ -51,6 +58,7 @@ export function buildView({ cfg, adapters, io, now = Date.now(), events = loadEv
 export function appFor(t, adapters, io) {
   const name = adapterFor(adapters, t.agent)?.foreground?.[process.platform];
   if (!name) return null;
-  if (t.agent === 'claude' && t.entrypoint !== 'claude-desktop' && !(io?.focusedAt(t) > 0)) return null;
+  // 官方账号是 claude-desktop，第三方模型（API 登录）是 claude-desktop-3p，都是同一个 Claude.app
+  if (t.agent === 'claude' && !isClaudeDesktop(t.entrypoint) && !(io?.focusedAt(t) > 0)) return null;
   return name;
 }

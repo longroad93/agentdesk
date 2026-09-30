@@ -24,6 +24,27 @@ test('钩子：规则默认摘要、入口类型从环境变量来、key 缺省�
   assert.equal(noKey.key, '/w');
 });
 
+test('第三方模型（API 登录）的桌面版：入口和自定义数据目录都从钩子环境里带上来', () => {
+  const raw = { stdin: JSON.stringify({ hook_event_name: 'Stop', session_id: 's1', cwd: '/p' }), argv: [] };
+  const ev = toEvent(claude, raw, 'claude', { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop-3p', CLAUDE_USER_DATA_DIR: '/data/claude' });
+  assert.equal(ev.entrypoint, 'claude-desktop-3p');
+  assert.equal(ev.user_data_dir, '/data/claude');
+  assert.equal(toEvent(claude, raw, 'claude', {}).user_data_dir, undefined, '没设就不带，不写空串');
+});
+
+test('「打开 ↗」：官方账号和 3p 的桌面版会话都能跳回 Claude，CLI 会话不行', async () => {
+  const { appFor } = await import('../src/view.js');
+  const adapters = { claude };
+  const noFocus = { focusedAt: () => 0 };
+  const app = claude.foreground[process.platform];
+  if (!app) return;   // 这个平台没声明 Claude 的窗口
+  assert.equal(appFor({ agent: 'claude', entrypoint: 'claude-desktop' }, adapters, noFocus), app);
+  assert.equal(appFor({ agent: 'claude', entrypoint: 'claude-desktop-3p' }, adapters, noFocus), app,
+    '以前只认 claude-desktop：API 登录的会话从没点开过的话，卡片上没有「打开 ↗」');
+  assert.equal(appFor({ agent: 'claude', entrypoint: 'cli' }, adapters, noFocus), null);
+  assert.equal(appFor({ agent: 'claude', entrypoint: 'cli' }, adapters, { focusedAt: () => 5 }), app, '旧事件没记入口：桌面版会话文件里有它就算');
+});
+
 test('机器注入的 prompt 不进摘要，但标记出来（它会开新一轮，但不代表你回来了）', () => {
   const raw = { stdin: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's1', prompt: '<task-notification><task-id>x</task-id>' }), argv: [] };
   const ev = toEvent(claude, raw, 'claude', {});

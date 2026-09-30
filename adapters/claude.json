@@ -23,7 +23,8 @@
     "transcript": "$.transcript_path"
   },
   "env": {
-    "entrypoint": "CLAUDE_CODE_ENTRYPOINT"
+    "entrypoint": "CLAUDE_CODE_ENTRYPOINT",
+    "user_data_dir": "CLAUDE_USER_DATA_DIR"
   },
   "rules": [
     {

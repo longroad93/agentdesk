@@ -8,7 +8,7 @@ import { STATES, ATTENTION, needsAttention } from './states.js';
 import { renderHTML, panelScript } from './ui.js';
 import { pollAll, watchSources } from './pollers.js';
 import { loadAdapters } from './adapters.js';
-import { createDesktopFocus, frontmostSupported } from './readstate.js';
+import { createDesktopFocus, createCodexReadState, frontmostSupported, claudeUserDataSessions, describeClaudeDirs } from './readstate.js';
 import { createIO, buildView } from './view.js';
 import { alertsOf, newAlerts, fireWebhooks } from './transitions.js';
 import { createScreenTracker, isOnScreen } from './screen.js';
@@ -34,7 +34,8 @@ export function serve({ port } = {}) {
 
   const adapters = loadAdapters();
   const desktop = createDesktopFocus();
-  const io = createIO({ desktop });
+  const codex = createCodexReadState();
+  const io = createIO({ desktop, codex });
   const screen = createScreenTracker({ adapters, desktop });
   // 兼容旧配置：muteForegroundAgent=false 关掉"在你眼前就不提醒"，sessionLevelSeen=false 关掉"看了一会儿就算看过"
   const muteOnScreen = cfg.muteForegroundAgent !== false;
@@ -47,6 +48,8 @@ export function serve({ port } = {}) {
   function view() {
     const events = loadEvents();
     hasEvents = events.length > 0;
+    // 桌面版要是用 CLAUDE_USER_DATA_DIR 换了数据目录，钩子会把它报上来；服务自己的环境里没有这个变量
+    desktop.addDirs(claudeUserDataSessions(events));
     tasks = buildView({ cfg, adapters, io, events });
     return tasks;
   }
@@ -171,7 +174,7 @@ export function serve({ port } = {}) {
       res.end(JSON.stringify({
         clients: [...clients.values()].map(({ cap, perm, compact }) => ({ cap, perm, compact })),
         notifier: n ? { cap: n.cap, compact: n.compact } : null,
-        signals: { claudeDesktopSessions: desktop.count, frontmost: frontmostSupported(), onScreen: screen.current },
+        signals: { claudeDesktopSessions: desktop.count, claudeDesktopDirs: desktop.activeDirs, codexReadState: codex.known, frontmost: frontmostSupported(), onScreen: screen.current },
       }));
       return;
     }
@@ -216,7 +219,7 @@ export function serve({ port } = {}) {
     alerts = alertsOf(tasks);
     baselineReady();
     process.stdout.write(`\n  agentdesk 面板  →  http://localhost:${port}\n  事件日志        →  ${EVENTS_FILE}\n` +
-      `  已读信号        →  Claude 桌面版 ${desktop.count} 个会话${frontmostSupported() ? '，前台检测可用' : ''}\n\n` +
+      `  已读信号        →  Claude 桌面版 ${describeClaudeDirs(desktop)}，Codex 桌面版${codex.known ? '未读列表可用' : '读不到'}${frontmostSupported() ? '，前台检测可用' : ''}\n\n` +
       '  通知由悬浮窗（agentdesk panel）或点过「开启通知」的浏览器页面负责。\n  Ctrl+C 退出。\n\n');
   });
 
@@ -234,6 +237,8 @@ export function serve({ port } = {}) {
   if (ws.count) process.stdout.write(`  已监听 ${ws.count} 个数据源（codex / workbuddy 的状态变化会即时反映）\n\n`);
   // 你在 Claude 桌面版里点开一个会话，这里就知道它被看过了
   desktop.watch(() => soon(300));
+  // 你在 Codex 桌面版里点开一个会话，它会把那个会话移出自己的未读列表
+  codex.watch(() => soon(300));
 
   // 有 agent 在动、或者有东西等你时，每 2 秒看一眼前台：
   // 停留够久的算看过；你正看着的不重提醒。什么都不用管的时候不查

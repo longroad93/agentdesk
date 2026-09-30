@@ -128,10 +128,14 @@ const NOT_ACTIVITY = new Set(['seen', 'closed', 'read']);
 //   subagentsMtime(p) → 子 agent transcript 的最新修改时间
 //   background(task)  → { bg: {id: info}, busy: bool }：真后台任务 / 有前台工具正在执行
 //   focusedAt(task)   → app 记录的"你最后一次点开这个会话"的时间
+//   appUnread(task)   → { unread, savedAt }：app 自己的未读列表里有没有它、列表什么时候落的盘；没有信号返回 null
 const NO_IO = {
   transcript: () => null, mtime: () => 0, subagentsMtime: () => 0,
-  background: () => null, focusedAt: () => 0,
+  background: () => null, focusedAt: () => 0, appUnread: () => null,
 };
+
+// app 在回合结束后把会话加进未读列表要一点时间，落盘时间得比完成晚这么多才算 app 处理过了
+const APP_SAVE_GRACE_MS = 3000;
 
 export function project(events, {
   now = Date.now(), timeouts = {}, retention, attentionRetention, skipRetention = false, io = {},
@@ -271,6 +275,12 @@ function derive(t, io, now, timeouts) {
     const since = t.state === 'stale' ? t.stale_at : t.done_at;
     const f = io.focusedAt(t);
     if (since && f > since) { t.seen = true; t.seen_via = 'app'; }
+  }
+  // 只记"现在谁未读"、不记时间的 app（Codex）：它说不在未读列表里，而且那份列表是这次完成之后才落的盘，
+  // 才算看过。完成那一刻 app 还没写，列表里自然没有它 —— 没有这道时间门槛，刚完成的任务会被当场判成已读
+  if (t.seen === false && (t.state === 'done' || t.state === 'failed') && t.done_at) {
+    const r = io.appUnread(t);
+    if (r && r.unread === false && r.savedAt > t.done_at + APP_SAVE_GRACE_MS) { t.seen = true; t.seen_via = 'app'; }
   }
 
   // 给人看的那一行：在跑的写正在干什么，等你的写要你干什么，完成的写它最后说了什么
