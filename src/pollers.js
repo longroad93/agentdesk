@@ -134,23 +134,43 @@ function sessionFilterVerdict(file, def) {
   if (!def.session_filter) return 'pass';
   const cached = filterCache.get(file);
   if (cached !== undefined) return cached ? 'pass' : 'skip';
-  try {
-    const buf = Buffer.alloc(8192);
-    const fd = openSync(file, 'r');
-    let n = 0;
-    try { n = readSync(fd, buf, 0, 8192, 0); } finally { closeSync(fd); }
-    const meta = JSON.parse(buf.toString('utf8', 0, n).split('\n')[0]);
-    if (meta?.type === 'session_meta') {
-      const ok = evalWhen(meta, def.session_filter);
-      filterCache.set(file, ok);
-      return ok ? 'pass' : 'skip';
-    }
-  } catch { /* 头还没落盘 */ }
-  // 一直读不出会话头的文件（格式不符），重试几轮后放行，免得永远卡住
+  let line = null;
+  try { line = readFirstLine(file); } catch { /* 读不了，下轮再试 */ }
+  // 还没有换行：头还没写完，等它写完。这是暂时的，不算进"格式不符"的重试次数
+  if (line === null) return 'retry';
+  let meta = null;
+  try { meta = JSON.parse(line); } catch { /* 格式不符 */ }
+  if (meta?.type === 'session_meta') {
+    const ok = evalWhen(meta, def.session_filter);
+    filterCache.set(file, ok);
+    return ok ? 'pass' : 'skip';
+  }
+  // 第一行是完整的、但不是会话头（格式不符）：重试几轮后放行，免得永远卡住
   const n = (retryCount.get(file) || 0) + 1;
   retryCount.set(file, n);
   if (n > 5) { filterCache.set(file, true); return 'pass'; }
   return 'retry';
+}
+
+// 读文件完整的第一行。以前固定读开头 8KB，可 Codex 的会话头里嵌着整份 base_instructions，
+// 实测 1.8 万～2.2 万字节：第一行永远读不全，每个会话都被当成"头还没写完"重试 5 次再兜底放行 ——
+// 你发起的会话平均晚 23 秒才出现，内部会话（guardian_review 等）重试完也被放了进来。
+// 返回 null = 还没有换行（头没写完）；超过 1MB 还没换行的，返回 '' 当格式不符处理
+function readFirstLine(file) {
+  const fd = openSync(file, 'r');
+  try {
+    const chunks = [];
+    for (let pos = 0; pos < 1024 * 1024;) {
+      const buf = Buffer.alloc(64 * 1024);
+      const n = readSync(fd, buf, 0, buf.length, pos);
+      if (n <= 0) return null;
+      const i = buf.subarray(0, n).indexOf(0x0a);
+      if (i >= 0) return Buffer.concat([...chunks, buf.subarray(0, i)]).toString('utf8');
+      chunks.push(buf.subarray(0, n));
+      pos += n;
+    }
+    return '';
+  } finally { closeSync(fd); }
 }
 
 function pollJsonl(def, name, st, now) {

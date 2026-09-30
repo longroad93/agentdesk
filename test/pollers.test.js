@@ -78,6 +78,47 @@ test('jsonl：过滤掉内部子代理会话；事件带上会话流文件路径
   assert.equal(evs[1].alive, f);
 });
 
+// 现在的 Codex 会话头（session_meta）里嵌着整份 base_instructions，实测 1.8 万～2.2 万字节。
+// 以前只读文件开头 8KB，第一行永远读不全 → 当成"头还没写完"重试 5 次 → 兜底放行：
+// 你发起的会话平均晚 23 秒才出现，内部会话（guardian_review 等）重试完也被放了进来
+test('会话头超过 8KB：第一轮就判定；内部会话轮询多少轮都进不来', () => {
+  const dir = tmp();
+  const big = 'x'.repeat(20_000);
+  const user = '01a0d8ad-0000-4000-8000-000000000011';
+  const guard = '01a0d8ad-0000-4000-8000-000000000012';
+  const head = src => JSON.stringify({ type: 'session_meta', payload: { thread_source: src, cwd: '/p', base_instructions: { text: big } } }) + '\n';
+  write(join(dir, '2026', '09', '25', `rollout-a-${user}.jsonl`), head('user') + JSON.stringify({ payload: { type: 'task_started' } }) + '\n');
+  write(join(dir, '2026', '09', '25', `rollout-b-${guard}.jsonl`), head('guardian_review') + JSON.stringify({ payload: { type: 'task_complete' } }) + '\n');
+  const def = {
+    name: 'codex', source: 'watch-jsonl', glob: join(dir, '*/*/*/rollout-*.jsonl'),
+    map: { key: '$._session' }, session_filter: '$.payload.thread_source == user',
+    rules: [{ when: '$.payload.type == task_complete', kind: 'done' }, { when: '$.payload.type == task_started', kind: 'start' }],
+  };
+  const mark = loadEvents().length;
+  pollAll({ codex: def });
+  assert.ok(loadEvents().slice(mark).some(e => e.key === user && e.kind === 'start'), '你发起的会话第一轮就该出现');
+  for (let i = 0; i < 7; i++) pollAll({ codex: def });
+  assert.equal(loadEvents().slice(mark).filter(e => e.key === guard).length, 0, '内部会话重试多少轮都不能放行');
+});
+
+test('会话头还没写完（没有换行）：这轮不动，写完再判', () => {
+  const dir = tmp();
+  const sess = '01a0d8ad-0000-4000-8000-000000000013';
+  const file = write(join(dir, '2026', '09', '25', `rollout-c-${sess}.jsonl`),
+    JSON.stringify({ type: 'session_meta', payload: { thread_source: 'user', base_instructions: 'y'.repeat(20_000) } }));
+  const def = {
+    name: 'codex', source: 'watch-jsonl', glob: join(dir, '*/*/*/rollout-*.jsonl'),
+    map: { key: '$._session' }, session_filter: '$.payload.thread_source == user',
+    rules: [{ when: '$.type == session_meta', kind: 'start' }],
+  };
+  const mark = loadEvents().length;
+  pollAll({ codex: def });
+  assert.equal(loadEvents().slice(mark).filter(e => e.key === sess).length, 0);
+  appendText(file, '\n');
+  pollAll({ codex: def });
+  assert.equal(loadEvents().slice(mark).filter(e => e.key === sess).length, 1);
+});
+
 test('监听计划：sqlite 只盯数据库那几个文件，不再递归盯整个目录', () => {
   const p = watchPlan({ source: 'sqlite', db: '/Users/x/.workbuddy/workbuddy.db' });
   assert.equal(p.dir, '/Users/x/.workbuddy');
