@@ -8,6 +8,9 @@ panel/agentdesk-panel
 helper/*.app/
 # 全局 gitignore 排除了 docs/（和下面 AGENTS.md 的情况一样）；这里放的是 README 的截图，要发布
 !docs/
+# 宣传片：成片和音轨是生成的；app 图标是各家商标，由 promo/extract-icons.sh 从本机提取
+promo/out/
+promo/assets/
 
 # 你的全局 gitignore 排除了 AGENTS.md（大概是为了不把 AI 指令带进工作项目），
 # 但在这个仓库里它是要发布的安装文档，强制留下

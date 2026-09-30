@@ -1,0 +1,55 @@
+/* 宣传片画布：固定 1920×1080，所有动画由 scene.js 的 render(t) 按时间算出来，
+   不用 CSS animation/transition —— 逐帧录制时必须是确定性的。
+   各 app 的样式在 apps/*.css，按 app 的原生尺寸写，外壳整体缩放后摆上舞台。 */
+:root{
+  --waiting:#f59e0b;--stale:#a855f7;--failed:#ef4444;--bgrun:#06b6d4;--done:#10b981;--running:#3b82f6;
+  --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;font-family:var(--sans);-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1400px 900px at 30% 20%,#2a3050 0%,#141830 55%,#0a0c18 100%)}
+
+/* 顶部菜单栏 */
+.menubar{position:absolute;left:0;right:0;top:0;height:34px;background:rgba(24,26,40,.78);
+  display:flex;align-items:center;padding:0 22px;gap:24px;color:#e4e4e7;font-size:15px;z-index:40}
+.menubar b{font-weight:600}
+.menubar .right{margin-left:auto;font-variant-numeric:tabular-nums}
+
+/* 快进时钟 */
+.clock{position:absolute;left:50%;top:52px;transform:translateX(-50%);display:flex;align-items:center;gap:16px;
+  padding:10px 26px;border-radius:999px;background:rgba(10,12,22,.85);border:1px solid rgba(255,255,255,.12);
+  color:#fff;font:600 44px/1 var(--mono);font-variant-numeric:tabular-nums;z-index:41;
+  box-shadow:0 10px 40px rgba(0,0,0,.45)}
+.clock .ff{font:600 22px/1 var(--sans);color:#a1a1aa;letter-spacing:1px}
+
+/* 窗口外壳 */
+.win{position:absolute;transform-origin:0 0;border-radius:12px;overflow:hidden}
+.tl{position:absolute;z-index:5;border-radius:50%;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
+.ic{display:inline-block;vertical-align:middle;flex:none}
+.spin{display:inline-block;border-radius:50%;border:1.5px solid #d4d4d4;border-top-color:#6b6b6b;flex:none}
+.win .dim{position:absolute;inset:0;background:#05060c;pointer-events:none;z-index:30}
+
+/* 「等了 20 分钟」标签：贴在窗口里的某个元素上，随窗口一起缩放 */
+.tag{position:absolute;padding:8px 16px;border-radius:8px;background:var(--waiting);color:#1c1300;
+  font:700 25px/1.2 var(--sans);box-shadow:0 6px 24px rgba(245,158,11,.5);z-index:31;white-space:nowrap;
+  transform-origin:right center}
+/* 窗口外圈的光晕：窗口本身 overflow:hidden 会把外阴影裁掉，所以单独画在舞台上 */
+.halo{position:absolute;border-radius:12px;pointer-events:none;--hc:var(--waiting);
+  box-shadow:0 0 0 3px var(--hc),0 0 80px 10px color-mix(in srgb,var(--hc) 55%,transparent)}
+
+/* 字幕：开场两句是大字，其余是旁白字幕 */
+.cap{position:absolute;left:160px;right:160px;bottom:56px;text-align:center;color:#fff;z-index:50;
+  font:500 38px/1.35 var(--sans);letter-spacing:1px;text-shadow:0 3px 18px rgba(0,0,0,.9)}
+.cap.big{font-size:60px;font-weight:600;letter-spacing:2px;bottom:64px}
+.cap em{font-style:normal;color:var(--waiting)}
+.shade{position:absolute;left:0;right:0;bottom:0;height:260px;z-index:49;pointer-events:none;
+  background:linear-gradient(transparent,rgba(4,5,10,.88))}
+.black{position:absolute;inset:0;background:#000;z-index:60;pointer-events:none}
+
+/* 缩放容器、鼠标 */
+.scaled{position:absolute;left:0;top:0;transform-origin:0 0}
+.cursor{position:absolute;left:0;top:0;z-index:45;transform-origin:3px 2px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
+.ripple{position:absolute;width:60px;height:60px;border-radius:50%;border:3px solid rgba(255,255,255,.9);z-index:44;pointer-events:none}
+.clock .lb{font:600 20px/1 var(--sans);color:#a1a1aa;letter-spacing:1px}

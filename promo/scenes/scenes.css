@@ -1,0 +1,52 @@
+/* 各场景自己的零碎样式 */
+.s2-title{position:absolute;left:0;right:0;top:92px;display:flex;align-items:center;justify-content:center;gap:16px;z-index:7;
+  color:#fff;font:700 54px/1 var(--sans);letter-spacing:1px}
+.s2-title img{width:62px;height:62px}
+
+/* 场景标题（左上角的小标签：等你 / 失联 / 后台跑着 / 未读） */
+.chap{position:absolute;left:64px;top:62px;z-index:8;display:flex;align-items:center;gap:12px;
+  font:700 30px/1 var(--sans);color:#fff;letter-spacing:1px}
+.chap i{font-style:normal;display:inline-grid;place-items:center;min-width:44px;height:44px;border-radius:11px;padding:0 10px;
+  font-size:24px;color:#fff;background:var(--c)}
+.chap small{font-size:20px;font-weight:500;color:#a1a1aa;letter-spacing:.5px}
+
+/* S4：Claude 窗口崩掉 */
+.crash{position:absolute;z-index:4;display:grid;place-items:center;color:#fff;font:600 22px/1.4 var(--sans);text-align:center;
+  border-radius:12px;background:rgba(10,10,16,.55)}
+
+/* S7：三张事实卡 */
+.fact{position:absolute;z-index:3;width:500px;height:430px;border-radius:24px;padding:38px 36px;color:#fff;
+  background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.03));border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.fact .big{font:700 84px/1 var(--sans);letter-spacing:-1px}
+.fact .big small{font-size:34px;font-weight:600;margin-left:6px;letter-spacing:0}
+.fact .lb{font:600 28px/1.3 var(--sans);margin-top:20px}
+.fact .ds{font:400 19px/1.55 var(--sans);color:#b4b4c0;margin-top:14px}
+.fact pre{margin-top:22px;font:15px/1.6 var(--mono);color:#d4d4d8;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:14px 16px;white-space:pre}
+.fact pre .k{color:#93c5fd}.fact pre .s{color:#86efac}
+.fact .bar{margin-top:22px;height:14px;border-radius:7px;background:rgba(255,255,255,.08);overflow:hidden;display:flex}
+.fact .bar i{display:block;height:100%}
+.fact .legend{display:flex;justify-content:space-between;margin-top:9px;font:14px var(--sans);color:#a1a1aa}
+
+/* S8：终端 + AI 提示 */
+.term{position:absolute;z-index:3;border-radius:12px;overflow:hidden;background:#101218;box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 0 .5px rgba(255,255,255,.1)}
+.term .tb{height:38px;background:#1b1d26;position:relative;color:#a1a1aa;font:13px/38px var(--sans);text-align:center}
+.term .body{padding:20px 26px;font:21px/1.7 var(--mono);color:#e4e4e7;white-space:pre}
+.term .p{color:#4ade80}.term .d{color:#71717a}.term .ok{color:#4ade80}
+.term .caret{display:inline-block;width:11px;height:24px;background:#e4e4e7;vertical-align:-4px}
+.ai-card{position:absolute;z-index:4;width:700px;border-radius:16px;padding:22px 26px;background:#fdfdfc;color:#1f1e1b;
+  box-shadow:0 30px 80px rgba(0,0,0,.5);font:18px/1.6 var(--sans)}
+.ai-card .h{display:flex;align-items:center;gap:10px;font-size:14px;color:#8a8984;margin-bottom:10px}
+.ai-card .h img{width:22px;height:22px;border-radius:5px}
+.ai-card code{font:16px var(--mono);background:#f0f0ee;border-radius:5px;padding:1px 6px}
+
+/* S9：结尾 */
+.endcard{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff}
+.endcard img{width:150px;height:150px}
+.endcard .n{font:700 92px/1 var(--sans);letter-spacing:1px;margin-top:30px}
+.endcard .sl{font:500 34px/1.4 var(--sans);color:#d4d4d8;margin-top:22px}
+.endcard .sl em{font-style:normal;color:var(--waiting)}
+.endcard .url{margin-top:44px;font:22px var(--mono);color:#a1a1aa;padding:10px 22px;border:1px solid rgba(255,255,255,.14);border-radius:12px}
+.endcard .agents{display:flex;gap:26px;margin-top:40px;align-items:center;color:#8b8b95;font:16px var(--sans)}
+.endcard .agents img{width:40px;height:40px;border-radius:9px}
+.endcard .tm{position:absolute;bottom:34px;font:13px var(--sans);color:#5b5b66}

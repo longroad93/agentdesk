@@ -1,0 +1,56 @@
+/* 悬浮窗外壳。里面的 header / #list / .task 全部用 src/ui/panel.css 的 body.compact 规则，
+   这里只把 "body.compact" 那一层换成 .adp-body，再补上 WKWebView 外面那层 NSPanel 的样子。
+   panel.css 的选择器都挂在 body.compact 上 —— 所以 .adp-body 上同时挂 compact / shell / alert 这几个类，
+   再用下面几条把 body 级规则映射过来。 */
+/* 旁边的标注挂在 .scaled 容器里、跟着面板一起缩放，所以 .adp 要撑开容器（relative） */
+.callout{position:absolute;z-index:8;padding:5px 9px;border-radius:6px;background:var(--cc,#f59e0b);color:#1c1300;
+  font:700 14px/1.25 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;white-space:nowrap;
+  box-shadow:0 5px 16px color-mix(in srgb,var(--cc,#f59e0b) 45%,transparent)}
+.callout.below{top:calc(100% + 10px);right:8px}
+.callout.below::after{content:"";position:absolute;right:16px;top:-6px;border:6px solid transparent;border-top:0;border-bottom-color:var(--cc,#f59e0b)}
+.callout.left{right:calc(100% + 12px);top:6px}
+.callout.left::after{content:"";position:absolute;right:-6px;top:50%;margin-top:-6px;border:6px solid transparent;border-right:0;border-left-color:var(--cc,#f59e0b)}
+.adp{position:relative;width:340px;border-radius:12px;overflow:hidden;
+  box-shadow:0 24px 60px rgba(0,0,0,.55),0 0 0 .5px rgba(0,0,0,.4);
+  --bg:#fbfbfd;--card:#fff;--fg:#18181b;--dim:#71717a;--line:#e4e4e7;--shadow:0 1px 3px rgba(0,0,0,.06);--alert:#f59e0b}
+.adp-tl{position:absolute;left:0;top:0;width:70px;height:28px;z-index:3}
+.adp-body{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+
+/* 下面是 src/ui/panel.css 里 body.compact 系列规则的照搬，只把 body.compact 换成 .adp-body.compact。
+   有改动先改 panel.css，再同步这里（片子里的面板必须和产品一致） */
+.adp-body header{display:flex;align-items:center;position:relative;z-index:2;margin:0;padding:9px 12px 9px 72px;background:var(--bg);border-bottom:1px solid var(--line);gap:8px;flex-wrap:nowrap}
+.adp-body.alert header{background:color-mix(in srgb,var(--alert) 16%,var(--bg))}
+.adp-body h1{font-size:11.5px;font-weight:600;letter-spacing:.2px}
+.adp-body #count{font-size:10.5px;color:var(--dim);margin-right:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adp-body.alert #count{color:var(--alert);font-weight:600}
+.adp-body button{font:inherit;font-size:10.5px;padding:2px 7px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:5px;white-space:nowrap;flex:none}
+.adp-body button.on{background:#3b82f6;border-color:#3b82f6;color:#fff}
+.adp-body #list{padding:0}
+.adp-body .task{display:grid;grid-template-columns:auto 1fr auto;align-items:baseline;gap:7px;padding:8px 12px;margin:0;border:0;border-radius:0;box-shadow:none;border-bottom:1px solid var(--line);background:var(--card)}
+.adp-body .task:last-of-type{border-bottom:0}
+.adp-body .task.needs{background:color-mix(in srgb,var(--bar) 6%,var(--card))}
+.adp-body .task.groupstart{border-top:6px solid var(--bg);margin-top:-1px}
+.adp-body .badge{font-size:11px;font-weight:600;color:var(--bar);line-height:1.4;width:14px;text-align:center;flex:none}
+.adp-body .main{grid-column:2;min-width:0}
+.adp-body .title{font-size:12.5px;font-weight:600;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adp-body .task.needs .title{font-weight:650}
+.adp-body .task.needs .title::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--bar);margin-right:6px;vertical-align:middle;position:relative;top:-1px}
+.adp-body .task.quiet .title{font-weight:500;color:var(--dim)}
+.adp-body .task.quiet .badge{opacity:.5}
+.adp-body .sub{font-size:10.5px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adp-body .task.waiting .sub{color:var(--fg)}
+.adp-body .who{color:var(--fg);opacity:.75;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9.5px;letter-spacing:.2px;margin-right:2px}
+.adp-body .when{grid-column:3;font-size:10px;color:var(--dim);white-space:nowrap}
+
+/* macOS 通知横幅 */
+.mac-note{position:absolute;width:372px;display:flex;gap:11px;padding:11px 13px;border-radius:17px;
+  background:rgba(246,246,248,.86);backdrop-filter:blur(30px) saturate(1.6);-webkit-backdrop-filter:blur(30px) saturate(1.6);
+  box-shadow:0 12px 40px rgba(0,0,0,.35),0 0 0 .5px rgba(0,0,0,.15);color:#1d1d1f;font-family:var(--sans)}
+.mac-note .ni{width:36px;height:36px;border-radius:8px;flex:none;margin-top:2px}
+.mac-note .nt{min-width:0;flex:1}
+.mac-note .nh{display:flex;font-size:11.5px;color:#6e6e73;margin-bottom:1px}
+.mac-note .nh b{font-weight:600;color:#1d1d1f;opacity:.85}
+.mac-note .nh span{margin-left:auto}
+.mac-note .ntl{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mac-note .nb{font-size:12.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mac-note .nb.dim{color:#6e6e73;font-size:11.5px}
