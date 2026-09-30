@@ -11,6 +11,11 @@ forgetting whether something finished. It's an agent **sitting there waiting for
 approval while you assume it's working**. The window is open, the cursor blinks, and
 twenty minutes later you find out it asked you something three minutes in.
 
+<p align="center">
+  <img src="docs/images/demo-waiting.gif" width="760" alt="While you work in Codex, Claude asks for approval to run a command in another session: the floating panel marks it Waiting and a system notification shows the command">
+</p>
+<p align="center"><sub>You're watching Codex while Claude waits on your approval — the panel and a notification tell you at once (agent UIs are illustrative, data is demo data)</sub></p>
+
 > Installing via an AI assistant? See [AGENTS.md](./AGENTS.md) — step-by-step with verification
 > for each stage, and it marks the three steps that must be done by a human.
 
@@ -47,6 +52,11 @@ agentdesk panel    # open the floating window
 Always on top, follows you across Spaces and full-screen apps, and clicking it doesn't steal
 focus from whatever you're typing in. Drag anywhere to move; position and size are remembered.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/panel-dark.png">
+  <img src="docs/images/panel-light.png" width="360" alt="Floating panel: the header reads '1 waiting · 2 errors · 1 unseen', above a task list with active tasks first, finished ones below">
+</picture>
+
 **It delivers the notifications.** The first time, click "开启通知" (enable notifications) in its
 header and allow the system prompt — after that no browser tab has to stay open. macOS gives new apps
 the "Banners" style, which vanishes after a few seconds — switch it to "Alerts" in System Settings →
@@ -64,6 +74,13 @@ agentdesk
 More detail (paths, full timestamps). Cross-platform. After you allow notifications on the page it
 can deliver them too; when the floating panel is also open, only the panel does, so nothing rings
 twice. If no open page can deliver notifications, the panel says so at the top.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/browser-dark.png">
+  <img src="docs/images/browser-light.png" width="560" alt="Browser panel: one card per state, each with a state badge, a subtitle, the agent, the project path and a timestamp">
+</picture>
+
+The UI text is Chinese for now.
 
 **③ Terminal**
 
@@ -167,6 +184,8 @@ session records are a private format; if an update changes it, status says so an
 fall back to "reply or click" instead of silently breaking.
 
 ## States
+
+The browser panel screenshot above has one task in each of these seven states.
 
 | State | Meaning |
 |---|---|

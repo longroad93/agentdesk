@@ -12,6 +12,11 @@
 
 agentdesk 把所有 agent 的状态收到一处，只回答一个问题：现在有几个在等我。
 
+<p align="center">
+  <img src="docs/images/demo-waiting.gif" width="760" alt="你在 Codex 里干活时，Claude 在另一个会话里等你批准一条命令：悬浮窗立刻标成「等你」，同时弹出一条写着命令的系统通知">
+</p>
+<p align="center"><sub>你盯着 Codex 的时候，Claude 在等你批准一条命令 —— 悬浮窗和通知同时告诉你（agent 界面为示意，数据为演示）</sub></p>
+
 > 让 AI 帮你装？项目里有 [AGENTS.md](./AGENTS.md)，把仓库丢给 Claude Code / Codex 让它读那个文件，
 > 里面写了每一步的验证方法，以及哪三步必须由你本人操作。
 
@@ -48,6 +53,11 @@ agentdesk panel    # 再开悬浮窗
 一个常驻置顶的小窗，切到别的桌面或全屏应用也跟着走，点它不会抢走你正在打字的窗口的焦点。
 拖任意位置可移动，位置和大小会记住，关掉窗口即退出。
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/panel-dark.png">
+  <img src="docs/images/panel-light.png" width="360" alt="悬浮窗：头部写着「1 等你 · 2 出错 · 1 未看」，下面按先进行中、后已结束排好的任务清单">
+</picture>
+
 **通知由它负责。** 第一次打开会看到右上角「开启通知」，点一下，系统弹授权框时选允许 ——
 之后就不需要开着浏览器了。系统给新 app 的默认样式是「横幅」，几秒就自己消失，很容易错过 ——
 建议到 系统设置 → 通知 → Agentdesk Panel，把样式改成「提醒」。
@@ -63,6 +73,11 @@ agentdesk          # 起服务并打开浏览器
 
 信息更全（带路径、完整时间），适合摊开看。跨平台。在页面上点「开启通知」授权后，它也能弹通知；
 和悬浮窗同时开着时只由悬浮窗弹，不会每条响两遍。一个能弹通知的页面都没有时，面板顶上会直接说原因。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/browser-dark.png">
+  <img src="docs/images/browser-light.png" width="560" alt="浏览器面板：七种状态各一张卡片，带状态徽标、副行、agent、项目路径和时间">
+</picture>
 
 **③ 终端**
 
@@ -152,6 +167,8 @@ agentdesk 的条目、把 `notify` 还原成接管前的值、移除开机自启
 哪天升级改了格式，这里会显示读不到，已读退回"回话 / 点击才算"—— 不会悄悄坏掉。
 
 ## 状态
+
+上面浏览器面板的截图里，这七种状态各有一条。
 
 | 状态 | 含义 |
 |---|---|
