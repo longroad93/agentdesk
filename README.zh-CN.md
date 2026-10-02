@@ -27,17 +27,21 @@ agentdesk 把所有 agent 的状态收到一处，只回答一个问题：现在
 | **Node 18+** | 主程序。`node -v` 确认 |
 | **Xcode 命令行工具** | 只有 macOS 悬浮窗需要，`xcode-select --install`。不装的话其他功能照常用，只是没有桌面小窗 |
 
-**npm 包名还没注册，目前只能从源码装：**
-
 ```bash
-git clone <仓库地址> agentdesk
-cd agentdesk
-npm link          # 把 agentdesk 命令挂到全局
+npm i -g agentdesk-panel
 agentdesk init    # 自动接入已安装的 agent
 ```
 
 `init` 会扫描你装了哪些 agent 并写好钩子配置，原文件都留 `.agentdesk-backup`。
 想先看会改什么：`agentdesk init --dry-run`。
+
+想跑最新的源码：
+
+```bash
+git clone https://github.com/longroad93/agentdesk
+cd agentdesk
+npm link          # 把 agentdesk 命令挂到全局
+```
 
 不想全局安装的话，把下面所有 `agentdesk` 换成 `node bin/agentdesk.js` 也一样能用。
 

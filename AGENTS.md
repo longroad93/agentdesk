@@ -24,11 +24,14 @@ which swiftc               # 有 = 能装悬浮窗；没有 = 第 4 步改用浏
 
 ## 1. 安装
 
-用户拿到的可能是 tarball 或者 git 仓库：
+默认从 npm 装；用户手上是 tarball 或 git 仓库的话用后两种：
 
 ```bash
+# npm
+npm i -g agentdesk-panel
+
 # tarball
-npm i -g ./agentdesk-0.1.0.tgz
+npm i -g ./agentdesk-panel-0.1.0.tgz
 
 # 或者源码
 cd agentdesk && npm link

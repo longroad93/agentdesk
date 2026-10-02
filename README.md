@@ -26,17 +26,21 @@ twenty minutes later you find out it asked you something three minutes in.
 | **Node 18+** | The main program |
 | **Xcode command line tools** | Only for the macOS floating panel — `xcode-select --install`. Everything else works without it |
 
-**The npm name isn't registered yet, so install from source:**
-
 ```bash
-git clone <repo> agentdesk
-cd agentdesk
-npm link
+npm i -g agentdesk-panel
 agentdesk init
 ```
 
 `init` detects which agents you have and wires up their hooks (originals kept as
 `.agentdesk-backup`). Use `agentdesk init --dry-run` to preview.
+
+To run the latest source instead:
+
+```bash
+git clone https://github.com/longroad93/agentdesk
+cd agentdesk
+npm link
+```
 
 Not into a global install? Replace every `agentdesk` below with `node bin/agentdesk.js`.
 

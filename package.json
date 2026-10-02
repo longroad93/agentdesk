@@ -1,7 +1,15 @@
 {
-  "name": "agentdesk",
+  "name": "agentdesk-panel",
   "version": "0.1.0",
   "description": "One panel for all your AI coding agents. Know which one is waiting on you.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/longroad93/agentdesk.git"
+  },
+  "homepage": "https://github.com/longroad93/agentdesk#readme",
+  "bugs": {
+    "url": "https://github.com/longroad93/agentdesk/issues"
+  },
   "type": "module",
   "bin": {
     "agentdesk": "bin/agentdesk.js"
@@ -25,10 +33,14 @@
   "license": "MIT",
   "keywords": [
     "claude-code",
+    "claude",
     "codex",
+    "workbuddy",
+    "ai-agents",
     "agent",
     "dashboard",
-    "notification"
+    "notification",
+    "developer-tools"
   ],
   "os": [
     "darwin",
